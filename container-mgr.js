@@ -129,6 +129,9 @@ async function startContainer(jobId) {
   });
 
   // Build docker run command
+  // Remove any leftover container with same name
+  try { execSync('docker rm -f ' + containerName + ' 2>/dev/null'); } catch(e) {}
+
   var cmd = 'docker run -d' +
     ' --name ' + containerName +
     ' --memory ' + config.containerMemory +
