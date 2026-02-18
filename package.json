@@ -8,7 +8,9 @@
     "docker:build": "cd docker && docker build -f ari2-agent.Dockerfile -t ari2-agent:latest ."
   },
   "dependencies": {
-    "@autobb/vap-agent": "^0.2.0",
+    "@noble/secp256k1": "^2.1.0",
+    "@noble/hashes": "^1.4.0",
+    "bs58check": "^4.0.0",
     "socket.io-client": "^4.7.0"
   },
   "private": true

@@ -19,25 +19,13 @@ const FULL_IDENTITY = 'ari3.agentplatform@';
 const keys = JSON.parse(fs.readFileSync('/home/vap-av1/.vap-keys.json', 'utf8'));
 console.log('Loaded keys for address:', keys.address);
 
-// Helper: Sign message with WIF (simplified - actual implementation needs proper WIF signing)
-// For now, we'll use the SDK if available, or raw secp256k1
+// Helper: Sign message with WIF using @noble/secp256k1
 async function signMessage(message, wif) {
-  // Try to use SDK first
-  try {
-    const sdk = require('@autobb/vap-agent');
-    if (sdk.signMessage) {
-      return sdk.signMessage(message, wif);
-    }
-  } catch(e) {
-    console.log('SDK not available, using manual signing');
-  }
-  
-  // Manual signing with @noble/secp256k1
   const secp256k1 = require('@noble/secp256k1');
   const { sha256 } = require('@noble/hashes/sha2');
+  const bs58check = require('bs58check');
   
   // Decode WIF to private key
-  const bs58check = require('bs58check');
   const decoded = bs58check.decode(wif);
   // WIF format: 1 byte version + 32 byte privkey + [optional 1 byte compression flag] + 4 byte checksum
   const privKey = decoded.slice(1, 33);
