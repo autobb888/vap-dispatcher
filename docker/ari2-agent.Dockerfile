@@ -1,7 +1,7 @@
 FROM node:22-slim
 
 # Install curl for health checks
-RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends curl git && rm -rf /var/lib/apt/lists/*
 
 # Install OpenClaw
 RUN npm install -g openclaw
