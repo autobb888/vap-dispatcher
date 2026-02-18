@@ -72,21 +72,10 @@ function generateContainerConfig(token) {
     agents: {
       defaults: {
         model: { primary: 'proxy/' + config.model },
-        workspace: '/agent/.openclaw/workspace',
-        memorySearch: {
-          provider: 'openai',
-          remote: {
-            baseUrl: proxyUrl + '/embeddings/v1/',
-            apiKey: token
-          },
-          model: 'openai/text-embedding-3-small'
-        }
+        workspace: '/agent/.openclaw/workspace'
       },
       list: [{
-        id: 'main',
-        memorySearch: {
-          extraPaths: ['/data/wiki']
-        }
+        id: 'main'
       }]
     }
   }, null, 2);
