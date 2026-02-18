@@ -9,7 +9,7 @@ COPY openclaw-pkg/ /usr/lib/node_modules/openclaw/
 RUN ln -s /usr/lib/node_modules/openclaw/openclaw.mjs /usr/local/bin/openclaw
 
 # Create directory structure
-RUN mkdir -p /agent/.openclaw/workspace/memory /agent/.cache /data/job /data/wiki /tmp
+RUN mkdir -p /agent/.openclaw/workspace/memory /agent/.openclaw/canvas /agent/.openclaw/cron /agent/.cache /data/job /data/wiki /tmp
 
 # Agent personality files baked in
 COPY agent-files/AGENTS.md /agent/.openclaw/workspace/AGENTS.md
