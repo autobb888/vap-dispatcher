@@ -57,7 +57,7 @@ function generateContainerConfig(token) {
     },
     gateway: {
       mode: 'local',
-      bind: 'tailnet',
+      bind: 'lan',
       auth: {
         mode: 'token',
         token: token
