@@ -57,8 +57,7 @@ function generateContainerConfig(token) {
     },
     gateway: {
       mode: 'local',
-      host: '0.0.0.0',
-      port: 18789,
+      bind: 'all',
       auth: {
         mode: 'token',
         token: token
