@@ -1,19 +1,16 @@
 FROM node:22-slim
 
 # Install curl for health checks
-RUN apt-get update && apt-get install -y --no-install-recommends curl git openssh-client && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
 
-# Force git to use HTTPS instead of SSH
-RUN git config --global url."https://github.com/".insteadOf ssh://git@github.com/
-RUN git config --global url."https://github.com/".insteadOf git@github.com:
-
-# Install OpenClaw
-RUN npm install -g openclaw
+# Copy OpenClaw from host (mounted at build time via volume or COPY)
+# We copy the global node_modules install to avoid SSH git dep issues
+COPY openclaw-pkg/ /usr/lib/node_modules/openclaw/
+RUN ln -s /usr/lib/node_modules/openclaw/bin/openclaw.mjs /usr/local/bin/openclaw && chmod +x /usr/local/bin/openclaw
 
 # Create directory structure
 RUN mkdir -p /agent/.openclaw/workspace/memory /data/job /data/wiki /tmp
 
-# Config, wiki, and memory index are mounted at runtime
 # Agent personality files baked in
 COPY agent-files/AGENTS.md /agent/.openclaw/workspace/AGENTS.md
 COPY agent-files/SOUL.md /agent/.openclaw/workspace/SOUL.md
