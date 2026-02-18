@@ -3,6 +3,10 @@ FROM node:22-slim
 # Install curl for health checks
 RUN apt-get update && apt-get install -y --no-install-recommends curl git openssh-client && rm -rf /var/lib/apt/lists/*
 
+# Force git to use HTTPS instead of SSH
+RUN git config --global url."https://github.com/".insteadOf ssh://git@github.com/
+RUN git config --global url."https://github.com/".insteadOf git@github.com:
+
 # Install OpenClaw
 RUN npm install -g openclaw
 
