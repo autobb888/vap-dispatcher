@@ -11,8 +11,7 @@ var signChallenge = null;
 
 function init() {
   keys = JSON.parse(fs.readFileSync(config.vapKeysFile, 'utf8'));
-  // Requires vap-agent-sdk to be installed: npm install @autobb/vap-agent
-  signChallenge = require('@autobb/vap-agent/dist/identity/signer.js').signChallenge;
+  signChallenge = require('@autobb/vap-agent').signChallenge;
 }
 
 async function login() {
