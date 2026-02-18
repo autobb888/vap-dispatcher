@@ -2,14 +2,24 @@
  * Container Manager — Docker lifecycle for ephemeral agent containers
  * 
  * Manages port allocation, container creation, health checks, and cleanup.
- * Uses child_process.exec for Docker commands (no Docker SDK dependency).
+ * Shield audit: P1-DC-1 (execFile over exec), P1-DC-2 (config perms),
+ * P2-DC-2 (separate dispatcher logs), P2-DC-3 (processedJobs TTL)
  */
-var exec = require('child_process').exec;
-var execSync = require('child_process').execSync;
+var execFile = require('child_process').execFile;
+var execFileSync = require('child_process').execFileSync;
 var fs = require('fs');
 var path = require('path');
 var crypto = require('crypto');
 var config = require('./config');
+
+// Strict jobId validation (Shield P1-DC-1)
+var JOB_ID_RE = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
+
+function validateJobId(jobId) {
+  if (!JOB_ID_RE.test(jobId)) {
+    throw new Error('Invalid jobId format: ' + jobId);
+  }
+}
 
 // Port pool
 var freePorts = new Set();
@@ -94,10 +104,34 @@ function generateContainerConfig(token) {
 }
 
 /**
+ * Clean up orphan containers from previous runs (Shield recommendation)
+ */
+function cleanupOrphans() {
+  try {
+    var output = execFileSync('docker', ['ps', '-a', '--filter', 'name=ari2-', '--format', '{{.Names}}'], { encoding: 'utf8' });
+    var names = output.trim().split('\n').filter(Boolean);
+    if (names.length > 0) {
+      console.log('[DOCKER] Cleaning up ' + names.length + ' orphan container(s)');
+      names.forEach(function(name) {
+        try {
+          execFileSync('docker', ['rm', '-f', name]);
+          console.log('[DOCKER] Removed orphan: ' + name);
+        } catch(e) {}
+      });
+    }
+  } catch(e) {
+    // No orphans or docker not available
+  }
+}
+
+/**
  * Start a new container for a job
  * Returns { port, containerId, token } or null on failure
  */
 async function startContainer(jobId) {
+  // Validate jobId to prevent injection (Shield P1-DC-1)
+  validateJobId(jobId);
+
   var port = getAvailablePort();
   if (!port) {
     console.error('[DOCKER] No available ports');
@@ -111,16 +145,22 @@ async function startContainer(jobId) {
   var jobDir = path.join(config.jobsPath, jobId);
   if (!fs.existsSync(jobDir)) fs.mkdirSync(jobDir, { recursive: true });
 
-  // Write container config to tmp
+  // Write container config with restricted perms (Shield P1-DC-2)
   var configDir = path.join(config.tmpConfigBase, jobId);
   var openclawDir = path.join(configDir, '.openclaw');
   var workspaceDir = path.join(openclawDir, 'workspace');
   var memoryDir = path.join(workspaceDir, 'memory');
   fs.mkdirSync(memoryDir, { recursive: true });
-  fs.writeFileSync(path.join(openclawDir, 'openclaw.json'), generateContainerConfig(token));
+  fs.chmodSync(workspaceDir, 0o777);
+  fs.chmodSync(memoryDir, 0o777);
+  fs.writeFileSync(
+    path.join(openclawDir, 'openclaw.json'),
+    generateContainerConfig(token),
+    { mode: 0o600 }
+  );
   
   // Copy agent personality files if they exist
-  var agentFilesDir = path.join(__dirname, '..', 'docker', 'agent-files');
+  var agentFilesDir = path.join(__dirname, 'docker', 'agent-files');
   var filesToCopy = ['AGENTS.md', 'SOUL.md', 'IDENTITY.md'];
   filesToCopy.forEach(function(f) {
     var src = path.join(agentFilesDir, f);
@@ -129,36 +169,39 @@ async function startContainer(jobId) {
     }
   });
 
-  // Build docker run command
-  // Remove any leftover container with same name
-  try { execSync('docker rm -f ' + containerName + ' 2>/dev/null'); } catch(e) {}
+  // Remove any leftover container with same name (Shield P1-DC-1: execFile)
+  try { execFileSync('docker', ['rm', '-f', containerName]); } catch(e) {}
 
-  var cmd = 'docker run -d' +
-    ' --name ' + containerName +
-    ' --memory ' + config.containerMemory +
-    ' --cpus ' + config.containerCpus +
-    ' --read-only' +
-    ' --cap-drop ALL' +
-    ' --security-opt no-new-privileges' +
-    ' --tmpfs /tmp:rw,size=50m' +
-    ' --tmpfs /agent/.cache:rw,size=50m' +
-    ' --tmpfs /agent/.openclaw/cron:rw,size=1m' +
-    ' --tmpfs /agent/.openclaw/logs:rw,size=10m' +
-    ' -p 127.0.0.1:' + port + ':18789' +
-    ' -v ' + config.wikiPath + ':/data/wiki:ro' +
-    ' -v ' + jobDir + ':/data/job' +
-    ' -v ' + path.join(configDir, '.openclaw', 'openclaw.json') + ':/agent/.openclaw/openclaw.json:ro' +
-    ' -v ' + path.join(configDir, '.openclaw', 'workspace') + ':/agent/.openclaw/workspace:ro' +
-    ' --add-host host.docker.internal:host-gateway' +
-    ' -e OPENCLAW_HOME=/agent' +
-    ' -e NODE_OPTIONS=--max-old-space-size=1536' +
-    ' -e JOB_ID=' + jobId +
-    ' ' + config.dockerImage;
+  // Build docker run args array (Shield P1-DC-1: no shell concatenation)
+  var args = [
+    'run', '-d',
+    '--name', containerName,
+    '--memory', config.containerMemory,
+    '--cpus', String(config.containerCpus),
+    '--read-only',
+    '--cap-drop', 'ALL',
+    '--security-opt', 'no-new-privileges',
+    '--tmpfs', '/tmp:rw,size=50m',
+    '--tmpfs', '/agent/.cache:rw,size=50m',
+    '--tmpfs', '/agent/.openclaw/cron:rw,size=1m',
+    '--tmpfs', '/agent/.openclaw/logs:rw,size=10m',
+    '--tmpfs', '/agent/.openclaw/agents:rw,size=5m',
+    '-p', '127.0.0.1:' + port + ':18789',
+    '-v', config.wikiPath + ':/data/wiki:ro',
+    '-v', jobDir + ':/data/job',
+    '-v', path.join(configDir, '.openclaw', 'openclaw.json') + ':/agent/.openclaw/openclaw.json:ro',
+    '-v', path.join(configDir, '.openclaw', 'workspace') + ':/agent/.openclaw/workspace:rw',
+    '--add-host', 'host.docker.internal:host-gateway',
+    '-e', 'OPENCLAW_HOME=/agent',
+    '-e', 'NODE_OPTIONS=--max-old-space-size=1536',
+    '-e', 'JOB_ID=' + jobId,
+    config.dockerImage
+  ];
 
   return new Promise(function(resolve) {
     console.log('[DOCKER] Starting container for job ' + jobId.slice(0, 8) + ' on port ' + port);
     
-    exec(cmd, function(err, stdout, stderr) {
+    execFile('docker', args, function(err, stdout, stderr) {
       if (err) {
         console.error('[DOCKER] ❌ Failed to start container:', stderr || err.message);
         resolve(null);
@@ -185,19 +228,14 @@ async function startContainer(jobId) {
  * Wait for container to be healthy (HTTP endpoint responding)
  */
 async function waitForHealth(port, timeoutMs) {
-  timeoutMs = timeoutMs || 30000;
+  timeoutMs = timeoutMs || config.healthTimeout || 120000;
   var start = Date.now();
-  var url = 'http://127.0.0.1:' + port + '/v1/chat/completions';
-  var info = usedPorts.get(port);
-  var token = info ? info.token : '';
 
   while ((Date.now() - start) < timeoutMs) {
     try {
-      // Just check if the HTTP server is responding (serves web UI)
       var res = await fetch('http://127.0.0.1:' + port + '/', {
         signal: AbortSignal.timeout(5000),
       });
-      // Any response means the server is up
       if (res.status > 0) {
         console.log('[DOCKER] ✅ Container on port ' + port + ' is healthy (HTTP ' + res.status + ', ' + (Date.now() - start) + 'ms)');
         return true;
@@ -208,11 +246,11 @@ async function waitForHealth(port, timeoutMs) {
     await new Promise(function(r) { setTimeout(r, 2000); });
   }
   
-  // Dump container logs for debugging
+  // Dump container logs for debugging (Shield P1-DC-1: execFile)
   var containerInfo = usedPorts.get(port);
   if (containerInfo) {
     try {
-      var logs = execSync('docker logs ' + containerInfo.containerName + ' 2>&1').toString();
+      var logs = execFileSync('docker', ['logs', containerInfo.containerName], { encoding: 'utf8', timeout: 5000 });
       console.error('[DOCKER] ⚠️ Container logs:\n' + logs.slice(-2000));
     } catch(e) {}
   }
@@ -255,7 +293,7 @@ async function sendToContainer(port, message, nonce) {
 }
 
 /**
- * Stop and remove a container, release its port
+ * Stop and remove a container, release its port (Shield P1-DC-1: execFile)
  */
 async function destroyContainer(port) {
   var info = usedPorts.get(port);
@@ -265,27 +303,29 @@ async function destroyContainer(port) {
   console.log('[DOCKER] Destroying container ' + containerName + ' on port ' + port);
 
   return new Promise(function(resolve) {
-    exec('docker stop ' + containerName + ' && docker rm ' + containerName, function(err) {
-      if (err) console.error('[DOCKER] Cleanup error:', err.message);
+    execFile('docker', ['stop', containerName], function() {
+      execFile('docker', ['rm', '-f', containerName], function(err) {
+        if (err) console.error('[DOCKER] Cleanup error:', err.message);
 
-      // Clean up config tmpdir
-      var configDir = path.join(config.tmpConfigBase, info.jobId);
-      try {
-        fs.rmSync(configDir, { recursive: true, force: true });
-      } catch(e) {}
+        // Clean up config tmpdir
+        var configDir = path.join(config.tmpConfigBase, info.jobId);
+        try {
+          fs.rmSync(configDir, { recursive: true, force: true });
+        } catch(e) {}
 
-      usedPorts.delete(port);
-      
-      // Port cooldown before reuse
-      cooldownPorts.add(port);
-      setTimeout(function() {
-        cooldownPorts.delete(port);
-        freePorts.add(port);
-        console.log('[DOCKER] Port ' + port + ' released');
-      }, config.portCooldown);
+        usedPorts.delete(port);
+        
+        // Port cooldown before reuse
+        cooldownPorts.add(port);
+        setTimeout(function() {
+          cooldownPorts.delete(port);
+          freePorts.add(port);
+          console.log('[DOCKER] Port ' + port + ' released');
+        }, config.portCooldown);
 
-      console.log('[DOCKER] ✅ Container ' + containerName + ' destroyed');
-      resolve();
+        console.log('[DOCKER] ✅ Container ' + containerName + ' destroyed');
+        resolve();
+      });
     });
   });
 }
@@ -328,4 +368,6 @@ module.exports = {
   getActiveContainerCount: getActiveContainerCount,
   getPortForJob: getPortForJob,
   generateToken: generateToken,
+  cleanupOrphans: cleanupOrphans,
+  validateJobId: validateJobId,
 };

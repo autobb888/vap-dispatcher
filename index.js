@@ -21,8 +21,8 @@ var chatLogger = require('./chat-logger');
 var rateLimiter = require('./rate-limiter');
 var crypto = require('crypto');
 
-// State
-var processedJobs = new Set();  // Jobs we've already seen
+// State — processedJobs with TTL pruning (Shield P2-DC-3)
+var processedJobs = new Map();  // jobId → timestamp
 var activeJobs = new Map();     // jobId → { port, containerId, token, status }
 var jobQueue = [];              // Jobs waiting for a free container slot
 
@@ -174,7 +174,7 @@ async function pollJobs() {
     for (var i = 0; i < jobs.length; i++) {
       var job = jobs[i];
       if (processedJobs.has(job.id)) continue;
-      processedJobs.add(job.id);
+      processedJobs.set(job.id, Date.now());
 
       console.log('[DISPATCH] New job request: ' + (job.description || '').slice(0, 60));
       console.log('           Amount: ' + job.amount + ' ' + job.currency + ' | ID: ' + job.id.slice(0, 8));
@@ -233,7 +233,7 @@ async function rejoinActiveJobs() {
     var jobs = await vapClient.getActiveJobs();
     for (var i = 0; i < jobs.length; i++) {
       safechat.joinRoom(jobs[i].id);
-      processedJobs.add(jobs[i].id);
+      processedJobs.set(jobs[i].id, Date.now());
     }
     if (jobs.length > 0) {
       console.log('[DISPATCH] Rejoined ' + jobs.length + ' active job rooms');
@@ -290,6 +290,9 @@ async function main() {
     fs.mkdirSync(config.tmpConfigBase, { recursive: true });
   }
 
+  // Clean up orphan containers from previous runs (Shield recommendation)
+  containerMgr.cleanupOrphans();
+
   // Initialize
   vapClient.init();
 
@@ -312,6 +315,19 @@ async function main() {
 
   // Lifetime enforcement every 60s
   setInterval(checkLifetimes, 60000);
+
+  // Prune processedJobs every 10 min (Shield P2-DC-3)
+  setInterval(function() {
+    var cutoff = Date.now() - 3600000; // 1hr TTL
+    var pruned = 0;
+    processedJobs.forEach(function(ts, id) {
+      if (ts < cutoff && !activeJobs.has(id)) {
+        processedJobs.delete(id);
+        pruned++;
+      }
+    });
+    if (pruned > 0) console.log('[DISPATCH] Pruned ' + pruned + ' stale job IDs');
+  }, 600000);
 
   console.log('[DISPATCH] ✅ Dispatcher running. Waiting for jobs...');
 }
