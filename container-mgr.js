@@ -72,10 +72,21 @@ function generateContainerConfig(token) {
     agents: {
       defaults: {
         model: { primary: 'proxy/' + config.model },
-        workspace: '/agent/.openclaw/workspace'
+        workspace: '/agent/.openclaw/workspace',
+        memorySearch: {
+          provider: 'openai',
+          remote: {
+            baseUrl: proxyUrl + '/embeddings/v1/',
+            apiKey: token
+          },
+          model: 'openai/text-embedding-3-small'
+        }
       },
       list: [{
-        id: 'main'
+        id: 'main',
+        memorySearch: {
+          extraPaths: ['/data/wiki']
+        }
       }]
     }
   }, null, 2);
@@ -137,6 +148,7 @@ async function startContainer(jobId) {
     ' -v ' + path.join(configDir, '.openclaw', 'workspace') + ':/agent/.openclaw/workspace:ro' +
     ' --add-host host.docker.internal:host-gateway' +
     ' -e OPENCLAW_HOME=/agent' +
+    ' -e NODE_OPTIONS=--max-old-space-size=1536' +
     ' -e JOB_ID=' + jobId +
     ' ' + config.dockerImage;
 

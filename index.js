@@ -114,7 +114,7 @@ async function spinUpContainer(jobId) {
   });
 
   // Wait for health
-  var healthy = await containerMgr.waitForHealth(result.port, 60000);
+  var healthy = await containerMgr.waitForHealth(result.port, 120000);
   if (!healthy) {
     console.error('[DISPATCH] Container failed health check for job ' + jobId.slice(0, 8));
     await teardownContainer(jobId);
