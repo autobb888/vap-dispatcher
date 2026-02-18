@@ -144,7 +144,8 @@ async function startContainer(jobId) {
     ' -p 127.0.0.1:' + port + ':18789' +
     ' -v ' + config.wikiPath + ':/data/wiki:ro' +
     ' -v ' + jobDir + ':/data/job' +
-    ' -v ' + configDir + ':/agent:ro' +
+    ' -v ' + path.join(configDir, '.openclaw', 'openclaw.json') + ':/agent/.openclaw/openclaw.json:ro' +
+    ' -v ' + path.join(configDir, '.openclaw', 'workspace') + ':/agent/.openclaw/workspace:ro' +
     ' --add-host host.docker.internal:host-gateway' +
     ' -e OPENCLAW_HOME=/agent' +
     ' -e JOB_ID=' + jobId +
