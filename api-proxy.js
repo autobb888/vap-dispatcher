@@ -57,7 +57,7 @@ function determineUpstream(path) {
   return {
     baseUrl: config.nvidiaBaseUrl,
     apiKey: config.nvidiaApiKey,
-    path: path
+    path: path.replace(/^\/v1/, '')
   };
 }
 
