@@ -6,7 +6,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf 
 # Copy OpenClaw from host (mounted at build time via volume or COPY)
 # We copy the global node_modules install to avoid SSH git dep issues
 COPY openclaw-pkg/ /usr/lib/node_modules/openclaw/
-RUN ln -s /usr/lib/node_modules/openclaw/bin/openclaw.mjs /usr/local/bin/openclaw && chmod +x /usr/local/bin/openclaw
+RUN ln -s /usr/lib/node_modules/openclaw/openclaw.mjs /usr/local/bin/openclaw
 
 # Create directory structure
 RUN mkdir -p /agent/.openclaw/workspace/memory /data/job /data/wiki /tmp
