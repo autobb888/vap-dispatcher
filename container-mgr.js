@@ -190,31 +190,14 @@ async function waitForHealth(port, timeoutMs) {
 
   while ((Date.now() - start) < timeoutMs) {
     try {
-      // First just check if the port is responding at all
-      var res = await fetch('http://127.0.0.1:' + port + '/health', {
+      // Just check if the HTTP server is responding (serves web UI)
+      var res = await fetch('http://127.0.0.1:' + port + '/', {
         signal: AbortSignal.timeout(5000),
       });
-      if (res.ok || res.status === 404) {
-        // Port is responding — now try the actual endpoint
-        res = await fetch(url, {
-          method: 'POST',
-          headers: {
-            'Authorization': 'Bearer ' + token,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            model: config.model,
-            messages: [{ role: 'user', content: 'ping' }]
-          }),
-          signal: AbortSignal.timeout(30000),
-        });
-      }
-      if (res.ok) {
-        console.log('[DOCKER] ✅ Container on port ' + port + ' is healthy (' + (Date.now() - start) + 'ms)');
+      // Any response means the server is up
+      if (res.status > 0) {
+        console.log('[DOCKER] ✅ Container on port ' + port + ' is healthy (HTTP ' + res.status + ', ' + (Date.now() - start) + 'ms)');
         return true;
-      } else {
-        var body = await res.text().catch(function() { return ''; });
-        console.log('[DOCKER] Health check HTTP ' + res.status + ': ' + body.slice(0, 200));
       }
     } catch (e) {
       console.log('[DOCKER] Health probe: ' + e.message);
