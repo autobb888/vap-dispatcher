@@ -16,7 +16,7 @@ var config = {
 
   // Docker
   dockerImage: process.env.DOCKER_IMAGE || 'ari2-agent:latest',
-  containerMemory: process.env.CONTAINER_MEMORY || '512m',
+  containerMemory: process.env.CONTAINER_MEMORY || '1g',
   containerCpus: process.env.CONTAINER_CPUS || '1',
   containerMaxLifetime: parseInt(process.env.CONTAINER_MAX_LIFETIME || '3600000', 10), // 1 hour
   portRangeStart: parseInt(process.env.PORT_RANGE_START || '19001', 10),
