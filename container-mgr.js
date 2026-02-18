@@ -211,6 +211,14 @@ async function waitForHealth(port, timeoutMs) {
     await new Promise(function(r) { setTimeout(r, 2000); });
   }
   
+  // Dump container logs for debugging
+  var containerInfo = usedPorts.get(port);
+  if (containerInfo) {
+    try {
+      var logs = execSync('docker logs ' + containerInfo.containerName + ' 2>&1').toString();
+      console.error('[DOCKER] ⚠️ Container logs:\n' + logs.slice(-2000));
+    } catch(e) {}
+  }
   console.error('[DOCKER] ⚠️ Container on port ' + port + ' failed health check after ' + timeoutMs + 'ms');
   return false;
 }
