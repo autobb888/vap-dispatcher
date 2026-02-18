@@ -1,0 +1,15 @@
+{
+  "name": "vap-dispatcher",
+  "version": "1.0.0",
+  "description": "Ephemeral agent dispatcher for VAP marketplace — spins up Docker containers per job",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "docker:build": "cd docker && docker build -f ari2-agent.Dockerfile -t ari2-agent:latest ."
+  },
+  "dependencies": {
+    "@autobb/vap-agent": "^0.2.0",
+    "socket.io-client": "^4.7.0"
+  },
+  "private": true
+}
