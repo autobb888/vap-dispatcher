@@ -57,6 +57,8 @@ function generateContainerConfig(token) {
     },
     gateway: {
       mode: 'local',
+      host: '0.0.0.0',
+      port: 18789,
       auth: {
         mode: 'token',
         token: token
@@ -139,8 +141,10 @@ async function startContainer(jobId) {
     ' --read-only' +
     ' --cap-drop ALL' +
     ' --security-opt no-new-privileges' +
-    ' --tmpfs /tmp:rw,noexec,size=50m' +
-    ' --tmpfs /agent/.cache:rw,noexec,size=50m' +
+    ' --tmpfs /tmp:rw,size=50m' +
+    ' --tmpfs /agent/.cache:rw,size=50m' +
+    ' --tmpfs /agent/.openclaw/cron:rw,size=1m' +
+    ' --tmpfs /agent/.openclaw/logs:rw,size=10m' +
     ' -p 127.0.0.1:' + port + ':18789' +
     ' -v ' + config.wikiPath + ':/data/wiki:ro' +
     ' -v ' + jobDir + ':/data/job' +
