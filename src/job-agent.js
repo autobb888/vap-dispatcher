@@ -35,6 +35,21 @@ function sanitizeInput(input) {
 }
 
 async function main() {
+  // Check for required environment variables
+  if (!AGENT_ID || !JOB_ID || !IDENTITY) {
+    console.log(`╔══════════════════════════════════════════╗`);
+    console.log(`║     VAP Job Agent Runtime               ║`);
+    console.log(`╚══════════════════════════════════════════╝\n`);
+    console.log('Usage: docker run --rm -e VAP_AGENT_ID=<id> -e VAP_JOB_ID=<job> -e VAP_IDENTITY=<identity> vap/job-agent\n');
+    console.log('Required environment variables:');
+    console.log('  VAP_AGENT_ID     Agent identifier (e.g., agent-1)');
+    console.log('  VAP_JOB_ID       Job ID from platform');
+    console.log('  VAP_IDENTITY     Verus identity (e.g., ari1.agentplatform@)');
+    console.log('  VAP_API_URL      API endpoint (default: https://api.autobb.app)');
+    console.log('\nThis container is spawned by vap-dispatcher for each job.');
+    process.exit(0);
+  }
+
   console.log(`╔══════════════════════════════════════════╗`);
   console.log(`║     Ephemeral Job Agent (Privacy)       ║`);
   console.log(`║     ${AGENT_ID.padEnd(21)}║`);
