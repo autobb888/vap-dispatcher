@@ -37,36 +37,39 @@ fi
 # Install SDK deps and build
 # NOTE: Using npm for SDK because pnpm has issues with GitHub commit refs
 cd vap-agent-sdk
+
+# Always ensure node_modules exists
 if [ ! -d "node_modules" ]; then
     echo "  Installing SDK dependencies..."
-    npm install
+    npm install --ignore-scripts  # Skip prepare for now
 fi
-if [ ! -f "dist/index.js" ]; then
-    echo "  Building SDK..."
-    # Install TypeScript if needed
-    if ! npx tsc --version > /dev/null 2>&1; then
-        echo "  Installing TypeScript..."
-        npm install -D typescript
-    fi
-    # Build
-    npx tsc || {
-        echo "  ⚠️  TypeScript had errors, checking if dist was created anyway..."
-    }
-    # Verify
-    if [ ! -f "dist/index.js" ]; then
-        echo "  ❌ SDK build failed - dist/index.js not found"
-        ls -la dist/ 2>/dev/null || echo "  No dist folder"
-        exit 1
-    fi
-fi
-cd ..
 
-if [ ! -f "vap-agent-sdk/dist/index.js" ]; then
-    echo "  ❌ SDK build failed"
+# Always build dist (don't rely on prepare script)
+echo "  Building SDK..."
+npm install -D typescript  # Ensure TypeScript is available
+npx tsc --version
+echo "  Running TypeScript compiler..."
+npx tsc 2>&1 | head -20 || true  # Show first 20 lines of errors
+
+# Check result
+if [ ! -f "dist/index.js" ]; then
+    echo "  ❌ SDK build failed - dist/index.js not found"
+    echo "  Checking what was created..."
+    ls -la dist/ 2>/dev/null || echo "  No dist folder"
     exit 1
 fi
 
-echo "  ✓ SDK ready"
+echo "  ✓ SDK dist created"
+cd ..
+
+if [ ! -f "vap-agent-sdk/dist/index.js" ]; then
+    echo "  ❌ ERROR: SDK dist/index.js not found after build!"
+    echo "  Contents of vap-agent-sdk/:"
+    ls -la vap-agent-sdk/ 2>/dev/null | head -20
+    exit 1
+fi
+
+echo "  ✓ SDK verified"
 
 # ─────────────────────────────────────────
 # STEP 2: Install dispatcher deps
