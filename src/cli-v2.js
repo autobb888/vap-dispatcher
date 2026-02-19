@@ -400,7 +400,7 @@ async function startJobContainer(state, job, agentInfo) {
   try {
     const container = await docker.createContainer({
       name: `vap-job-${job.id}`,
-      Image: 'vap/job-agent:latest', // Special ephemeral image
+      Image: 'vap/job-agent:latest',  // PRE-BAKED IMAGE
       Env: [
         `VAP_API_URL=${process.env.VAP_API_URL || 'https://api.autobb.app'}`,
         `VAP_AGENT_ID=${agentInfo.id}`,
@@ -417,11 +417,18 @@ async function startJobContainer(state, job, agentInfo) {
         AutoRemove: true, // Destroy on stop
         Memory: 2 * 1024 * 1024 * 1024, // 2GB limit
         CpuQuota: 100000, // 1 CPU core
+        // Security: No new privileges
+        SecurityOpt: ['no-new-privileges:true'],
+        // Read-only root filesystem
+        ReadonlyRootfs: true,
+        // Drop all capabilities
+        CapDrop: ['ALL'],
       },
       Labels: {
         'vap.job.id': job.id,
         'vap.agent.id': agentInfo.id,
         'vap.started': String(Date.now()),
+        'vap.ephemeral': 'true',
       },
     });
     
