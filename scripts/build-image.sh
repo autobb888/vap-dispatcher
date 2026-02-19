@@ -81,7 +81,7 @@ if [ -d "$VAP_SDK_DIR/node_modules" ]; then
 fi
 
 # Copy dispatcher files needed by Dockerfile
-cp "$DISPATCHER_DIR/package.json" .build-temp/
+cp "$DISPATCHER_DIR/package.docker.json" .build-temp/package.json
 cp -r "$DISPATCHER_DIR/src" .build-temp/
 cp "$DISPATCHER_DIR/Dockerfile.job-agent" .build-temp/Dockerfile
 
