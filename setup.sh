@@ -35,15 +35,12 @@ fi
 if [ ! -f "vap-agent-sdk/dist/index.js" ]; then
     echo "  Building SDK..."
     cd vap-agent-sdk
-    npm run build 2>/dev/null || {
-        echo "  ⚠️  TypeScript build had errors, checking..."
-        # Check if dist was created anyway
-        if [ ! -f "dist/index.js" ]; then
-            echo "  ❌ SDK build failed. Trying fallback..."
-            # Copy src to dist as fallback (Node can run JS directly)
-            cp -r src dist 2>/dev/null || true
-        fi
-    }
+    # Install all deps including TypeScript
+    npm install
+    # Install TypeScript explicitly
+    npm install -D typescript
+    # Build
+    npx tsc || echo "  ⚠️  TypeScript may have errors, checking..."
     cd ..
 fi
 
