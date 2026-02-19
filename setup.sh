@@ -23,12 +23,33 @@ if [ ! -d "vap-agent-sdk" ]; then
     git clone https://github.com/autobb888/vap-agent-sdk.git
 fi
 
-if [ ! -d "vap-agent-sdk/dist" ]; then
-    echo "  Building SDK..."
+# Ensure SDK has node_modules
+if [ ! -d "vap-agent-sdk/node_modules" ]; then
+    echo "  Installing SDK dependencies..."
     cd vap-agent-sdk
     npm install
-    npm run build 2>/dev/null || echo "  (TypeScript errors expected, using existing dist)"
     cd ..
+fi
+
+# Ensure SDK has dist (compile if needed)
+if [ ! -f "vap-agent-sdk/dist/index.js" ]; then
+    echo "  Building SDK..."
+    cd vap-agent-sdk
+    npm run build 2>/dev/null || {
+        echo "  ⚠️  TypeScript build had errors, checking..."
+        # Check if dist was created anyway
+        if [ ! -f "dist/index.js" ]; then
+            echo "  ❌ SDK build failed. Trying fallback..."
+            # Copy src to dist as fallback (Node can run JS directly)
+            cp -r src dist 2>/dev/null || true
+        fi
+    }
+    cd ..
+fi
+
+if [ ! -f "vap-agent-sdk/dist/index.js" ]; then
+    echo "  ❌ SDK dist not found. Please check SDK setup."
+    exit 1
 fi
 
 echo "  ✓ SDK ready"
