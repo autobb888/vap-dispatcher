@@ -3,15 +3,13 @@
   "version": "0.1.0",
   "description": "Multi-agent orchestration for Verus Agent Platform",
   "main": "src/dispatcher.js",
-  "bin": {
-    "vap-dispatcher": "./src/cli.js"
-  },
   "scripts": {
-    "start": "node src/dispatcher.js",
-    "dev": "nodemon src/dispatcher.js"
+    "start": "node src/cli-v2.js start",
+    "cli": "node src/cli-v2.js",
+    "init": "node src/cli-v2.js init -n 9",
+    "build": "./scripts/build-image.sh"
   },
   "dependencies": {
-    "@autobb/vap-agent": "file:../vap-agent-sdk",
     "commander": "^11.0.0",
     "dockerode": "^4.0.0",
     "express": "^4.18.0",
@@ -19,7 +17,5 @@
     "ws": "^8.14.0",
     "yaml": "^2.3.0"
   },
-  "devDependencies": {
-    "nodemon": "^3.0.0"
-  }
+  "packageManager": "pnpm@10.0.0"
 }

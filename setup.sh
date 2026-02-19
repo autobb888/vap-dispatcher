@@ -1,7 +1,7 @@
 #!/bin/bash
 #
 # One-Shot VAP Dispatcher Setup
-# Does EVERYTHING in one command
+# Uses pnpm (NOT npm)
 #
 
 set -e
@@ -10,12 +10,23 @@ cd "$(dirname "$0")"
 
 echo "╔══════════════════════════════════════════╗"
 echo "║     VAP Dispatcher Full Setup            ║"
+echo "║     (using pnpm - no npm!)               ║"
 echo "╚══════════════════════════════════════════╝"
 echo ""
+
+# Install pnpm if missing
+if ! command -v pnpm > /dev/null 2>&1; then
+    echo "→ Installing pnpm..."
+    curl -fsSL https://get.pnpm.io/install.sh | sh -
+    export PATH="$HOME/.local/share/pnpm:$PATH"
+fi
+
+echo "✓ Using pnpm: $(pnpm --version)"
 
 # ─────────────────────────────────────────
 # STEP 1: Get SDK
 # ─────────────────────────────────────────
+echo ""
 echo "→ Step 1/5: Getting SDK..."
 
 if [ ! -d "vap-agent-sdk" ]; then
@@ -23,29 +34,20 @@ if [ ! -d "vap-agent-sdk" ]; then
     git clone https://github.com/autobb888/vap-agent-sdk.git
 fi
 
-# Ensure SDK has node_modules
-if [ ! -d "vap-agent-sdk/node_modules" ]; then
-    echo "  Installing SDK dependencies..."
-    cd vap-agent-sdk
-    npm install
-    cd ..
+# Install SDK deps and build
+cd vap-agent-sdk
+if [ ! -d "node_modules" ]; then
+    echo "  Installing SDK dependencies with pnpm..."
+    pnpm install
 fi
-
-# Ensure SDK has dist (compile if needed)
-if [ ! -f "vap-agent-sdk/dist/index.js" ]; then
+if [ ! -f "dist/index.js" ]; then
     echo "  Building SDK..."
-    cd vap-agent-sdk
-    # Install all deps including TypeScript
-    npm install
-    # Install TypeScript explicitly
-    npm install -D typescript
-    # Build
-    npx tsc || echo "  ⚠️  TypeScript may have errors, checking..."
-    cd ..
+    pnpm build || npx tsc
 fi
+cd ..
 
 if [ ! -f "vap-agent-sdk/dist/index.js" ]; then
-    echo "  ❌ SDK dist not found. Please check SDK setup."
+    echo "  ❌ SDK build failed"
     exit 1
 fi
 
@@ -55,9 +57,11 @@ echo "  ✓ SDK ready"
 # STEP 2: Install dispatcher deps
 # ─────────────────────────────────────────
 echo ""
-echo "→ Step 2/5: Installing dispatcher dependencies..."
+echo "→ Step 2/5: Installing dispatcher dependencies with pnpm..."
 
-npm install
+if [ ! -d "node_modules" ]; then
+    pnpm install
+fi
 
 echo "  ✓ Dependencies installed"
 
@@ -99,14 +103,14 @@ echo ""
 echo "Next steps:"
 echo ""
 echo "1. Register agents on platform:"
-echo "   node src/cli-v2.js register agent-1 ari1"
-echo "   node src/cli-v2.js register agent-2 ari2"
+echo "   pnpm cli register agent-1 ari1"
+echo "   pnpm cli register agent-2 ari2"
 echo "   ... (repeat for all 9)"
 echo ""
 echo "2. Wait for confirmations (~5-15 min each)"
 echo ""
 echo "3. Start dispatcher:"
-echo "   node src/cli-v2.js start"
+echo "   pnpm start"
 echo ""
 echo "4. Post jobs from dashboard and watch!"
 echo ""
