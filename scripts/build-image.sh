@@ -47,19 +47,17 @@ fi
 
 echo "✓ Dependencies OK"
 
-# Ensure SDK is built
+# Ensure SDK is built and dependencies installed
 echo ""
 echo "→ Building SDK..."
 cd "$VAP_SDK_DIR"
 if [ ! -d "dist" ]; then
-    # Use whatever package manager is available
-    if command -v pnpm &> /dev/null; then
-        pnpm install && pnpm run build
-    elif command -v yarn &> /dev/null; then
-        yarn install && yarn build
-    else
-        npm install && npm run build
-    fi
+    # Use npm for SDK build (GitHub deps work better)
+    npm install && npm run build
+fi
+# Ensure node_modules exists for copying
+if [ ! -d "node_modules" ]; then
+    npm install
 fi
 echo "✓ SDK built"
 

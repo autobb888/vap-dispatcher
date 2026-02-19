@@ -3,12 +3,11 @@
 
 FROM node:22-slim AS base
 
-# Install pnpm and system dependencies
+# Install system dependencies
 RUN apt-get update && apt-get install -y \
     git \
     curl \
     ca-certificates \
-    && corepack enable && corepack prepare pnpm@latest --activate \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -17,20 +16,20 @@ WORKDIR /app
 # PRE-INSTALL DEPENDENCIES (baked into image)
 # ─────────────────────────────────────────
 
-# 1. Copy and install SDK dependencies
+# 1. Copy SDK dependencies (pre-installed on host)
 # (vap-agent-sdk is copied to build context by build-image.sh)
 COPY vap-agent-sdk/package.json ./sdk/
 COPY vap-agent-sdk/dist ./sdk/dist
 COPY vap-agent-sdk/scripts ./sdk/scripts
 COPY vap-agent-sdk/bin ./sdk/bin
+COPY vap-agent-sdk/node_modules ./sdk/node_modules
 
-# Skip prepare script (it runs tsc which needs dev dependencies)
-# But manually run postinstall for bitcoin-ops patch
-RUN cd sdk && pnpm install --prod --ignore-scripts && node scripts/postinstall.js
+# Run postinstall for bitcoin-ops patch
+RUN cd sdk && node scripts/postinstall.js
 
-# 2. Install dispatcher runtime dependencies  
+# 2. Install dispatcher runtime dependencies with pnpm
 COPY package.json ./
-RUN pnpm install --prod
+RUN corepack enable && corepack prepare pnpm@latest --activate && pnpm install --prod
 
 # 3. Pre-download common MCP tools (optional optimization)
 # RUN pnpm install -g @anthropic-ai/mcp @modelcontextprotocol/server-filesystem
