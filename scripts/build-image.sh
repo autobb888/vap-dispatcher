@@ -45,11 +45,6 @@ if ! command -v docker &> /dev/null; then
     exit 1
 fi
 
-if ! command -v pnpm &> /dev/null; then
-    echo "→ Installing pnpm..."
-    npm install -g pnpm
-fi
-
 echo "✓ Dependencies OK"
 
 # Ensure SDK is built
@@ -57,7 +52,14 @@ echo ""
 echo "→ Building SDK..."
 cd "$VAP_SDK_DIR"
 if [ ! -d "dist" ]; then
-    pnpm install && pnpm run build
+    # Use whatever package manager is available
+    if command -v pnpm &> /dev/null; then
+        pnpm install && pnpm run build
+    elif command -v yarn &> /dev/null; then
+        yarn install && yarn build
+    else
+        npm install && npm run build
+    fi
 fi
 echo "✓ SDK built"
 
