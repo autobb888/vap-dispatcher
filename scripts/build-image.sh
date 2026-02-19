@@ -64,14 +64,16 @@ cd "$DISPATCHER_DIR"
 # Copy SDK into build context (Docker can't access parent dirs)
 echo "→ Copying SDK to build context..."
 rm -rf .build-temp 2>/dev/null || true
-mkdir -p .build-temp
+mkdir -p .build-temp/vap-agent-sdk
 
 # Copy only what's needed for production
-cp -r "$VAP_SDK_DIR/package.json" .build-temp/vap-agent-sdk/
+cp "$VAP_SDK_DIR/package.json" .build-temp/vap-agent-sdk/
 cp -r "$VAP_SDK_DIR/dist" .build-temp/vap-agent-sdk/
 cp -r "$VAP_SDK_DIR/scripts" .build-temp/vap-agent-sdk/
 cp -r "$VAP_SDK_DIR/bin" .build-temp/vap-agent-sdk/
-cp -r "$VAP_SDK_DIR/node_modules" .build-temp/vap-agent-sdk/ 2>/dev/null || true
+if [ -d "$VAP_SDK_DIR/node_modules" ]; then
+  cp -r "$VAP_SDK_DIR/node_modules" .build-temp/vap-agent-sdk/
+fi
 
 # Build
 docker build \
