@@ -3,11 +3,12 @@
 
 FROM node:22-slim AS base
 
-# Install system dependencies
+# Install pnpm and system dependencies
 RUN apt-get update && apt-get install -y \
     git \
     curl \
     ca-certificates \
+    && npm install -g pnpm \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -25,14 +26,14 @@ COPY vap-agent-sdk/bin ./sdk/bin
 
 # Skip prepare script (it runs tsc which needs dev dependencies)
 # But manually run postinstall for bitcoin-ops patch
-RUN cd sdk && npm install --omit=dev --ignore-scripts && node scripts/postinstall.js
+RUN cd sdk && pnpm install --prod --ignore-scripts && node scripts/postinstall.js
 
 # 2. Install dispatcher runtime dependencies  
 COPY package.json ./
-RUN npm install --production
+RUN pnpm install --prod
 
 # 3. Pre-download common MCP tools (optional optimization)
-# RUN npm install -g @anthropic-ai/mcp @modelcontextprotocol/server-filesystem
+# RUN pnpm install -g @anthropic-ai/mcp @modelcontextprotocol/server-filesystem
 
 # ─────────────────────────────────────────
 # RUNTIME FILES (mounted at runtime)
