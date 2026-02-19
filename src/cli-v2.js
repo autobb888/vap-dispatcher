@@ -100,10 +100,10 @@ program
       
       fs.mkdirSync(agentDir, { recursive: true });
       
-      // Generate keypair using SDK
+      // Generate keypair using standalone keygen (no SDK build needed)
       console.log(`  ${agentId}: generating keys...`);
       
-      const { generateKeypair } = require('./vap-agent-sdk/dist/identity/keypair.js');
+      const { generateKeypair } = require('./keygen.js');
       const keys = generateKeypair('verustest');
       
       fs.writeFileSync(
