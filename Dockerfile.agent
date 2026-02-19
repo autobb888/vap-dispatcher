@@ -1,0 +1,42 @@
+# VAP Agent Container
+# Runs: SDK + OpenClaw bridge client + MCP tools
+
+FROM node:22-slim
+
+# Install Docker CLI for spawning sibling containers
+RUN apt-get update && apt-get install -y \
+    docker.io \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create app directory
+WORKDIR /app
+
+# Copy SDK
+COPY --from=vap-sdk /app/dist ./sdk/dist
+COPY --from=vap-sdk /app/package.json ./sdk/
+
+# Install SDK dependencies
+RUN cd sdk && npm install --production
+
+# Copy agent runtime
+COPY src/agent-runtime.js ./
+COPY src/bridge-client.js ./
+COPY src/mcp-client.js ./
+
+# Install runtime dependencies
+RUN npm install ws dockerode
+
+# Agent configuration volume
+VOLUME ["/app/agent"]
+
+# Keys volume
+VOLUME ["/app/keys.json"]
+
+# Environment
+ENV VAP_API_URL=https://api.autobb.app
+ENV VAP_BRIDGE_URL=ws://localhost:18791
+ENV NODE_ENV=production
+
+# Start agent
+CMD ["node", "agent-runtime.js"]

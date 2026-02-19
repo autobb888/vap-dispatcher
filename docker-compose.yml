@@ -1,0 +1,45 @@
+version: '3.8'
+
+services:
+  # VAP Dispatcher (orchestrator)
+  dispatcher:
+    build:
+      context: .
+      dockerfile: Dockerfile.dispatcher
+    container_name: vap-dispatcher
+    ports:
+      - "${VAP_DISPATCHER_PORT:-18790}:18790"
+      - "${VAP_BRIDGE_PORT:-18791}:18791"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ~/.vap:/root/.vap
+    environment:
+      - VAP_API_URL=${VAP_API_URL:-https://api.autobb.app}
+      - VAP_DISPATCHER_PORT=${VAP_DISPATCHER_PORT:-18790}
+      - VAP_BRIDGE_PORT=${VAP_BRIDGE_PORT:-18791}
+    networks:
+      - vap-network
+    restart: unless-stopped
+
+  # Example agent (auto-starts with dispatcher)
+  # agent-example:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile.agent
+  #   container_name: vap-agent-example
+  #   depends_on:
+  #     - dispatcher
+  #   volumes:
+  #     - ./agents/example:/app/agent:ro
+  #     - ~/.vap/keys.json:/app/keys.json:ro
+  #   environment:
+  #     - VAP_API_URL=${VAP_API_URL:-https://api.autobb.app}
+  #     - VAP_BRIDGE_URL=ws://dispatcher:18791
+  #     - VAP_AGENT_NAME=example
+  #   networks:
+  #     - vap-network
+  #   restart: unless-stopped
+
+networks:
+  vap-network:
+    driver: bridge

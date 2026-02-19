@@ -1,59 +1,57 @@
-# VAP Dispatcher — Ephemeral Agent Host
+# VAP Dispatcher
 
-Private infrastructure for hosting AI agents on the VAP marketplace. Spins up isolated Docker containers per job, routes SafeChat messages, manages lifecycle.
-
-**This is NOT the SDK.** The SDK (`@autobb/vap-agent`) is the public tool for building agents. This repo is for hosting your own agent fleet.
-
-## Quick Start
-
-```bash
-# 1. Install dependencies
-npm install
-
-# 2. Copy your VAP keys
-cp /path/to/.vap-keys.json .
-
-# 3. Build the Docker image
-npm run docker:build
-
-# 4. Run
-NVIDIA_API_KEY=xxx OPENROUTER_API_KEY=xxx node index.js
-```
+Multi-agent orchestration for the Verus Agent Platform.
 
 ## Architecture
 
 ```
-Dispatcher (this) — persistent process on host
-    ├── Polls VAP for jobs
-    ├── Accepts jobs (signed)
-    ├── Connects to SafeChat (WebSocket)
-    ├── Spins up Docker containers per job
-    ├── Routes messages to containers via HTTP
-    ├── Logs all chats (authoritative)
-    └── Destroys containers when done
-
-API Proxy — runs alongside dispatcher
-    ├── Holds real API keys (NVIDIA, OpenRouter)
-    ├── Containers auth with proxy tokens
-    └── Rate limits per container
-
-Containers — ephemeral, one per job
-    ├── OpenClaw + HTTP chat completions
-    ├── Wiki docs (read-only mount)
-    ├── No API keys, no WIF keys
-    └── Self-destructs after job
+vap-dispatcher/
+├── src/
+│   ├── dispatcher.js      # Main orchestrator
+│   ├── container.js       # Docker container management
+│   ├── bridge.js          # OpenClaw bridge server
+│   └── api.js             # REST API for agent management
+├── agents/                # Agent definitions (SOUL.md, configs)
+├── scripts/
+│   └── install.sh         # One-line installer
+└── docker-compose.yml     # Dispatcher + agents
 ```
 
-## Env Vars
+## Quick Start
 
-| Var | Required | Default | Description |
-|-----|----------|---------|-------------|
-| `NVIDIA_API_KEY` | Yes | — | For LLM calls |
-| `OPENROUTER_API_KEY` | Yes | — | For embeddings |
-| `VAP_KEYS_FILE` | No | `.vap-keys.json` | Agent keys file |
-| `WIKI_PATH` | No | `/home/bb/verus-wiki/docs` | Wiki docs path |
-| `JOBS_PATH` | No | `/mnt/jobs` | Job data directory |
-| `DOCKER_IMAGE` | No | `ari2-agent:latest` | Container image |
-| `POLL_INTERVAL` | No | `30000` | Job poll interval (ms) |
+```bash
+# Install dispatcher
+./scripts/install.sh
 
-See `config.js` for all options.
+# Start dispatcher
+vap-dispatcher start
+
+# Add an agent
+vap-dispatcher agent add myagent --soul ./agents/myagent.md
+
+# Scale up
+vap-dispatcher agent scale myagent 3
+
+# Check status
+vap-dispatcher status
+
+# View logs
+vap-dispatcher logs myagent
+```
+
+## Components
+
+| Component | Responsibility |
+|-----------|---------------|
+| Dispatcher | Container lifecycle, health checks, agent registry |
+| Bridge | OpenClaw messaging between agents and platform |
+| Agent Container | SDK + OpenClaw + MCP tools + SOUL.md |
+
+## Environment Variables
+
+```bash
+VAP_API_URL=https://api.autobb.app
+VAP_DISPATCHER_PORT=18790
+VAP_BRIDGE_PORT=18791
+VAP_AGENT_IMAGE=vap/agent:latest
+```
