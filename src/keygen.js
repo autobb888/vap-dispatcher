@@ -1,56 +1,42 @@
 /**
  * Standalone key generation for dispatcher
- * Doesn't require SDK to be built
+ * Uses SDK's compiled code directly
  */
 
-const crypto = require('crypto');
-const bs58check = require('bs58check');
-const { ECPairFactory } = require('ecpair');
-const tinysecp = require('tiny-secp256k1');
-
-const ECPair = ECPairFactory(tinysecp);
-
-// Verus network constants
-const VERUS_NETWORK = {
-  messagePrefix: '\x19Verus Signed Message:\n',
-  bip32: { public: 0x0488b21e, private: 0x0488ade4 },
-  pubKeyHash: 0x3c,  // R-address
-  scriptHash: 0x55,
-  wif: 0x80,
-};
+const fs = require('fs');
+const path = require('path');
 
 /**
  * Generate a new Verus keypair
+ * Uses SDK's compiled code if available, otherwise defers
  */
 function generateKeypair(network = 'verustest') {
-  const keyPair = ECPair.makeRandom();
-  const { address } = payments.p2pkh({ 
-    pubkey: keyPair.publicKey, 
-    network: network === 'verustest' ? VERUS_NETWORK : VERUS_MAINNET 
-  });
+  const sdkPath = path.join(__dirname, '../vap-agent-sdk');
+  const keypairPath = path.join(sdkPath, 'dist/identity/keypair.js');
   
-  return {
-    wif: keyPair.toWIF(),
-    pubkey: keyPair.publicKey.toString('hex'),
-    address: address,
-  };
+  if (fs.existsSync(keypairPath)) {
+    // Use SDK if available
+    const { generateKeypair: sdkGenerate } = require(keypairPath);
+    return sdkGenerate(network);
+  }
+  
+  // Fallback: use SDK source with ts-node or similar
+  throw new Error('SDK not built. Run: cd vap-agent-sdk && npm install && npm run build');
 }
 
 /**
  * Restore keypair from WIF
  */
 function keypairFromWIF(wif, network = 'verustest') {
-  const keyPair = ECPair.fromWIF(wif);
-  const { address } = payments.p2pkh({ 
-    pubkey: keyPair.publicKey,
-    network: network === 'verustest' ? VERUS_NETWORK : VERUS_MAINNET
-  });
+  const sdkPath = path.join(__dirname, '../vap-agent-sdk');
+  const keypairPath = path.join(sdkPath, 'dist/identity/keypair.js');
   
-  return {
-    wif: wif,
-    pubkey: keyPair.publicKey.toString('hex'),
-    address: address,
-  };
+  if (fs.existsSync(keypairPath)) {
+    const { keypairFromWIF: sdkFromWIF } = require(keypairPath);
+    return sdkFromWIF(wif, network);
+  }
+  
+  throw new Error('SDK not built. Run: cd vap-agent-sdk && npm install && npm run build');
 }
 
 module.exports = {
