@@ -43,7 +43,21 @@ if [ ! -d "node_modules" ]; then
 fi
 if [ ! -f "dist/index.js" ]; then
     echo "  Building SDK..."
-    npm run build || npx tsc
+    # Install TypeScript if needed
+    if ! npx tsc --version > /dev/null 2>&1; then
+        echo "  Installing TypeScript..."
+        npm install -D typescript
+    fi
+    # Build
+    npx tsc || {
+        echo "  ⚠️  TypeScript had errors, checking if dist was created anyway..."
+    }
+    # Verify
+    if [ ! -f "dist/index.js" ]; then
+        echo "  ❌ SDK build failed - dist/index.js not found"
+        ls -la dist/ 2>/dev/null || echo "  No dist folder"
+        exit 1
+    fi
 fi
 cd ..
 
