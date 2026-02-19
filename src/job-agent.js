@@ -26,6 +26,14 @@ const JOB_DIR = '/app/job';
 // Container metadata (from Docker labels)
 const CONTAINER_ID = process.env.HOSTNAME || 'unknown'; // Docker sets HOSTNAME to container ID
 
+// P2-1: Input sanitization helper
+function sanitizeInput(input) {
+  if (typeof input !== 'string') return '';
+  return input
+    .replace(/[\x00-\x1F\x7F]/g, '') // Remove control characters
+    .substring(0, 10000); // Limit length to prevent DoS
+}
+
 async function main() {
   console.log(`╔══════════════════════════════════════════╗`);
   console.log(`║     Ephemeral Job Agent (Privacy)       ║`);
@@ -40,13 +48,13 @@ async function main() {
   // Load keys
   const keys = JSON.parse(fs.readFileSync(KEYS_FILE, 'utf8'));
   
-  // Load job data
+  // Load job data with input validation (P2-1)
   const job = {
     id: JOB_ID,
-    description: fs.readFileSync(path.join(JOB_DIR, 'description.txt'), 'utf8'),
-    buyer: fs.readFileSync(path.join(JOB_DIR, 'buyer.txt'), 'utf8'),
-    amount: fs.readFileSync(path.join(JOB_DIR, 'amount.txt'), 'utf8'),
-    currency: fs.readFileSync(path.join(JOB_DIR, 'currency.txt'), 'utf8'),
+    description: sanitizeInput(fs.readFileSync(path.join(JOB_DIR, 'description.txt'), 'utf8')),
+    buyer: sanitizeInput(fs.readFileSync(path.join(JOB_DIR, 'buyer.txt'), 'utf8')),
+    amount: sanitizeInput(fs.readFileSync(path.join(JOB_DIR, 'amount.txt'), 'utf8')),
+    currency: sanitizeInput(fs.readFileSync(path.join(JOB_DIR, 'currency.txt'), 'utf8')),
   };
   
   console.log('Job Details:');
@@ -68,8 +76,16 @@ async function main() {
   console.log('→ Signing creation attestation...');
   
   const creationTime = new Date().toISOString();
+  // P1-2: Fix job hash construction with structured JSON
   const jobHash = crypto.createHash('sha256')
-    .update(job.description + job.buyer + job.amount)
+    .update(JSON.stringify({
+      jobId: JOB_ID,
+      description: job.description,
+      buyer: job.buyer,
+      amount: job.amount,
+      currency: job.currency,
+      timestamp: creationTime,
+    }))
     .digest('hex');
   
   const creationAttestation = {

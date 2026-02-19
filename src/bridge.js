@@ -16,6 +16,21 @@ class BridgeServer {
     this.port = port;
     this.agents = new Map(); // agentId -> ws connection
     this.sessions = new Map(); // sessionId -> agentId
+    // P2-2: Simple token secret (in production, use proper key derivation)
+    this.tokenSecret = process.env.VAP_BRIDGE_SECRET || 'dev-secret-change-in-production';
+  }
+  
+  // P2-2: Verify agent token
+  verifyAgentToken(agentId, token) {
+    if (!token || !agentId) return false;
+    // Simple HMAC verification
+    const crypto = require('crypto');
+    const expected = crypto
+      .createHmac('sha256', this.tokenSecret)
+      .update(agentId)
+      .digest('hex')
+      .substring(0, 32);
+    return token === expected;
   }
   
   async start() {
@@ -24,6 +39,14 @@ class BridgeServer {
     
     this.wss.on('connection', (ws, req) => {
       const agentId = req.url.split('/').pop();
+      
+      // P2-2: Token authentication
+      const token = req.headers['x-agent-token'];
+      if (!this.verifyAgentToken(agentId, token)) {
+        console.log(`[Bridge] Rejected connection for ${agentId}: Invalid token`);
+        ws.close(1008, 'Invalid token');
+        return;
+      }
       
       console.log(`[Bridge] Agent connected: ${agentId}`);
       this.agents.set(agentId, ws);

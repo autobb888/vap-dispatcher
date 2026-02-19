@@ -47,10 +47,10 @@ async function startAgent(name, agentDir, config) {
       RestartPolicy: {
         Name: 'unless-stopped',
       },
-      // Add Docker socket for OpenClaw bridge to spawn sibling containers
-      ...(process.platform === 'linux' ? {
-        GroupAdd: ['docker'],
-      } : {}),
+      // Security hardening (P1-1, P2-3)
+      SecurityOpt: ['no-new-privileges:true'],
+      CapDrop: ['ALL'],
+      ReadonlyRootfs: true,
     },
     Labels: {
       'vap.agent.name': name,
