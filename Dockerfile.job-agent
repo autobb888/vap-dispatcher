@@ -20,7 +20,9 @@ WORKDIR /app
 # (vap-agent-sdk is copied to build context by build-image.sh)
 COPY vap-agent-sdk/package.json ./sdk/
 COPY vap-agent-sdk/dist ./sdk/dist
-RUN cd sdk && npm install --production
+COPY vap-agent-sdk/scripts ./sdk/scripts
+COPY vap-agent-sdk/bin ./sdk/bin
+RUN cd sdk && npm install --omit=dev
 
 # 2. Install dispatcher runtime dependencies  
 COPY package.json ./
