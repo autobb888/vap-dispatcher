@@ -17,12 +17,13 @@ WORKDIR /app
 # ─────────────────────────────────────────
 
 # 1. Copy and install SDK dependencies
+# (vap-agent-sdk is copied to build context by build-image.sh)
 COPY vap-agent-sdk/package.json ./sdk/
 COPY vap-agent-sdk/dist ./sdk/dist
 RUN cd sdk && npm install --production
 
 # 2. Install dispatcher runtime dependencies  
-COPY vap-dispatcher/package.json ./
+COPY package.json ./
 RUN npm install --production
 
 # 3. Pre-download common MCP tools (optional optimization)
@@ -38,9 +39,9 @@ RUN npm install --production
 # - /app/job/ (job data, read-only)
 
 # Copy runtime scripts (baked into image)
-COPY vap-dispatcher/src/job-agent.js ./
-COPY vap-dispatcher/src/bridge-client.js ./
-COPY vap-dispatcher/src/mcp-client.js ./
+COPY src/job-agent.js ./
+COPY src/bridge-client.js ./
+COPY src/mcp-client.js ./
 
 # ─────────────────────────────────────────
 # SECURITY HARDENING
