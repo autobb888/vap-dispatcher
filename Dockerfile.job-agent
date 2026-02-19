@@ -22,7 +22,10 @@ COPY vap-agent-sdk/package.json ./sdk/
 COPY vap-agent-sdk/dist ./sdk/dist
 COPY vap-agent-sdk/scripts ./sdk/scripts
 COPY vap-agent-sdk/bin ./sdk/bin
-RUN cd sdk && npm install --omit=dev
+
+# Skip prepare script (it runs tsc which needs dev dependencies)
+# But manually run postinstall for bitcoin-ops patch
+RUN cd sdk && npm install --omit=dev --ignore-scripts && node scripts/postinstall.js
 
 # 2. Install dispatcher runtime dependencies  
 COPY package.json ./
