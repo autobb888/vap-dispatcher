@@ -10,7 +10,7 @@ cd "$(dirname "$0")"
 
 echo "╔══════════════════════════════════════════╗"
 echo "║     VAP Dispatcher Full Setup            ║"
-echo "║     (using pnpm - no npm!)               ║"
+echo "║     (pnpm for dispatcher, npm for SDK)   ║"
 echo "╚══════════════════════════════════════════╝"
 echo ""
 
@@ -21,7 +21,7 @@ if ! command -v pnpm > /dev/null 2>&1; then
     export PATH="$HOME/.local/share/pnpm:$PATH"
 fi
 
-echo "✓ Using pnpm: $(pnpm --version)"
+echo "✓ pnpm: $(pnpm --version), npm: $(npm --version)"
 
 # ─────────────────────────────────────────
 # STEP 1: Get SDK
@@ -35,14 +35,15 @@ if [ ! -d "vap-agent-sdk" ]; then
 fi
 
 # Install SDK deps and build
+# NOTE: Using npm for SDK because pnpm has issues with GitHub commit refs
 cd vap-agent-sdk
 if [ ! -d "node_modules" ]; then
-    echo "  Installing SDK dependencies with pnpm..."
-    pnpm install
+    echo "  Installing SDK dependencies..."
+    npm install
 fi
 if [ ! -f "dist/index.js" ]; then
     echo "  Building SDK..."
-    pnpm build || npx tsc
+    npm run build || npx tsc
 fi
 cd ..
 
