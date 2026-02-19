@@ -103,7 +103,7 @@ program
       // Generate keypair using SDK
       console.log(`  ${agentId}: generating keys...`);
       
-      const { generateKeypair } = require('../vap-agent-sdk/dist/identity/keypair.js');
+      const { generateKeypair } = require('./vap-agent-sdk/dist/identity/keypair.js');
       const keys = generateKeypair('verustest');
       
       fs.writeFileSync(
@@ -144,7 +144,7 @@ program
     console.log(`\n→ Registering ${agentId} as ${identityName}.agentplatform@...`);
     console.log(`   Address: ${keys.address}`);
     
-    const { VAPAgent } = require('../vap-agent-sdk/dist/index.js');
+    const { VAPAgent } = require('./vap-agent-sdk/dist/index.js');
     const agent = new VAPAgent({ 
       vapUrl: process.env.VAP_API_URL || 'https://api.autobb.app',
       wif: keys.wif 
@@ -331,7 +331,7 @@ program
 // Poll for new jobs
 async function pollForJobs(state) {
   // Get jobs from all available agents
-  const { VAPAgent } = require('../vap-agent-sdk/dist/index.js');
+  const { VAPAgent } = require('./vap-agent-sdk/dist/index.js');
   
   for (const agentInfo of [...state.available]) {
     try {
@@ -344,7 +344,7 @@ async function pollForJobs(state) {
       
       // Quick login to get session
       const challengeRes = await agent.client.getAuthChallenge();
-      const { signChallenge } = require('../vap-agent-sdk/dist/identity/signer.js');
+      const { signChallenge } = require('./vap-agent-sdk/dist/identity/signer.js');
       const sig = signChallenge(agentInfo.wif, challengeRes.challenge, agentInfo.iAddress, 'verustest');
       
       // Fetch pending jobs
