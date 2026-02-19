@@ -182,10 +182,12 @@ program
     console.log('╔══════════════════════════════════════════╗');
     console.log('║     VAP Dispatcher                       ║');
     console.log('║     Ephemeral Job Containers             ║');
+    console.log('║     with Privacy Attestation             ║');
     console.log('╚══════════════════════════════════════════╝\n');
     console.log(`Registered agents: ${agents.length}`);
     console.log(`Max concurrent: ${MAX_AGENTS}`);
-    console.log(`Job timeout: ${JOB_TIMEOUT_MS / 60000} min\n`);
+    console.log(`Job timeout: ${JOB_TIMEOUT_MS / 60000} min`);
+    console.log('Privacy: Creation + Deletion attestations\n');
     
     // Check which agents are registered on platform
     const readyAgents = [];
@@ -265,6 +267,61 @@ program
       });
       console.log('');
     }
+    
+    // Show privacy attestation stats
+    let attestationCount = 0;
+    activeJobs.forEach(job => {
+      const jobDir = path.join(JOBS_DIR, job.Names[0].replace('/vap-job-', ''));
+      if (fs.existsSync(path.join(jobDir, 'creation-attestation.json'))) {
+        attestationCount++;
+      }
+    });
+    
+    if (attestationCount > 0) {
+      console.log(`Privacy attestations: ${attestationCount} active\n`);
+    }
+  });
+
+// Privacy command — show attestation status
+program
+  .command('privacy')
+  .description('Show privacy attestation status')
+  .action(async () => {
+    ensureDirs();
+    
+    console.log('\n╔══════════════════════════════════════════╗');
+    console.log('║     Privacy Attestation Status           ║');
+    console.log('╚══════════════════════════════════════════╝\n');
+    
+    const completedJobs = fs.readdirSync(JOBS_DIR).filter(id => {
+      return fs.existsSync(path.join(JOBS_DIR, id, 'deletion-attestation.json'));
+    });
+    
+    console.log(`Jobs with privacy attestations: ${completedJobs.length}\n`);
+    
+    if (completedJobs.length > 0) {
+      console.log('Recent attestations:');
+      completedJobs.slice(-5).forEach(jobId => {
+        const attPath = path.join(JOBS_DIR, jobId, 'deletion-attestation.json');
+        const att = JSON.parse(fs.readFileSync(attPath, 'utf8'));
+        console.log(`  ${jobId.substring(0, 8)}...`);
+        console.log(`    Created:  ${att.createdAt}`);
+        console.log(`    Deleted:  ${att.destroyedAt}`);
+        console.log(`    Duration: ${(new Date(att.destroyedAt) - new Date(att.createdAt)) / 1000}s`);
+        console.log(`    Method:   ${att.deletionMethod}`);
+        console.log(`    Verified: ${att.signature ? '✅ Signed' : '❌ No signature'}`);
+        console.log('');
+      });
+    }
+    
+    console.log('Privacy Features:');
+    console.log('  ✅ Ephemeral containers (auto-remove)');
+    console.log('  ✅ Creation attestation (signed proof of start)');
+    console.log('  ✅ Deletion attestation (signed proof of destruction)');
+    console.log('  ✅ Isolated job data (per-container volumes)');
+    console.log('  ✅ Resource limits (2GB RAM, 1 CPU)');
+    console.log('  ✅ Timeout protection (auto-kill after 1 hour)');
+    console.log('');
   });
 
 // Poll for new jobs

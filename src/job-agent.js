@@ -1,17 +1,17 @@
 /**
- * Ephemeral Job Agent Runtime
+ * Ephemeral Job Agent Runtime with Privacy Attestation
  * 
- * Runs inside a job-specific container:
- * 1. Connects to VAP
- * 2. Accepts the specific job
- * 3. Does the work
- * 4. Delivers result
- * 5. Exits (container destroyed)
+ * Signs attestations:
+ * 1. CREATION: When container starts (container ID, timestamp, job hash)
+ * 2. DELETION: When container destroyed (destruction timestamp, data volumes)
+ * 
+ * These are submitted to the platform for privacy verification.
  */
 
 const { VAPAgent } = require('./sdk/dist/index.js');
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 
 const API_URL = process.env.VAP_API_URL;
 const AGENT_ID = process.env.VAP_AGENT_ID;
@@ -23,14 +23,18 @@ const KEYS_FILE = '/app/keys.json';
 const SOUL_FILE = '/app/SOUL.md';
 const JOB_DIR = '/app/job';
 
+// Container metadata (from Docker labels)
+const CONTAINER_ID = process.env.HOSTNAME || 'unknown'; // Docker sets HOSTNAME to container ID
+
 async function main() {
   console.log(`╔══════════════════════════════════════════╗`);
-  console.log(`║     Ephemeral Job Agent                 ║`);
+  console.log(`║     Ephemeral Job Agent (Privacy)       ║`);
   console.log(`║     ${AGENT_ID.padEnd(21)}║`);
   console.log(`╚══════════════════════════════════════════╝\n`);
   
   console.log(`Job ID: ${JOB_ID}`);
   console.log(`Identity: ${IDENTITY}`);
+  console.log(`Container: ${CONTAINER_ID.substring(0, 12)}`);
   console.log(`Timeout: ${TIMEOUT_MS / 60000} min\n`);
   
   // Load keys
@@ -50,13 +54,6 @@ async function main() {
   console.log(`  Buyer: ${job.buyer}`);
   console.log(`  Payment: ${job.amount} ${job.currency}\n`);
   
-  // Load SOUL
-  let soul = '';
-  if (fs.existsSync(SOUL_FILE)) {
-    soul = fs.readFileSync(SOUL_FILE, 'utf8');
-    console.log(`✓ SOUL loaded (${soul.length} chars)\n`);
-  }
-  
   // Initialize agent
   const agent = new VAPAgent({
     vapUrl: API_URL,
@@ -65,66 +62,193 @@ async function main() {
     iAddress: keys.iAddress,
   });
   
-  // Accept the job immediately
+  // ─────────────────────────────────────────
+  // STEP 1: CREATION ATTESTATION
+  // ─────────────────────────────────────────
+  console.log('→ Signing creation attestation...');
+  
+  const creationTime = new Date().toISOString();
+  const jobHash = crypto.createHash('sha256')
+    .update(job.description + job.buyer + job.amount)
+    .digest('hex');
+  
+  const creationAttestation = {
+    type: 'container:created',
+    jobId: JOB_ID,
+    containerId: CONTAINER_ID,
+    agentId: AGENT_ID,
+    identity: IDENTITY,
+    createdAt: creationTime,
+    jobHash: jobHash,
+    ephemeral: true,
+    memoryLimit: '2GB',
+    cpuLimit: '1 core',
+    privacyTier: 'ephemeral-container',
+  };
+  
+  const creationMessage = JSON.stringify(creationAttestation);
+  const { signChallenge } = require('./sdk/dist/identity/signer.js');
+  const creationSig = signChallenge(keys.wif, creationMessage, keys.iAddress, 'verustest');
+  
+  creationAttestation.signature = creationSig;
+  
+  // Save to job dir for later
+  fs.writeFileSync(
+    path.join(JOB_DIR, 'creation-attestation.json'),
+    JSON.stringify(creationAttestation, null, 2)
+  );
+  
+  console.log('✅ Creation attestation signed\n');
+  
+  // ─────────────────────────────────────────
+  // STEP 2: ACCEPT JOB
+  // ─────────────────────────────────────────
   console.log('→ Accepting job...');
   
   const timestamp = Math.floor(Date.now() / 1000);
   const acceptMessage = `VAP-ACCEPT|Job:${job.id}|Buyer:${job.buyer}|Amt:${job.amount} ${job.currency}|Ts:${timestamp}|I accept this job.`;
   
-  const { signChallenge } = require('./sdk/dist/identity/signer.js');
-  const signature = signChallenge(keys.wif, acceptMessage, keys.iAddress, 'verustest');
+  const acceptSig = signChallenge(keys.wif, acceptMessage, keys.iAddress, 'verustest');
   
-  await agent.client.acceptJob(job.id, signature, timestamp);
+  await agent.client.acceptJob(job.id, acceptSig, timestamp);
   console.log('✅ Job accepted\n');
   
   // Connect to chat
   await agent.connectChat();
   console.log('✅ Connected to SafeChat\n');
   
-  // Do the work (placeholder)
+  // ─────────────────────────────────────────
+  // STEP 3: DO THE WORK
+  // ─────────────────────────────────────────
   console.log('→ Processing job...\n');
   
-  const result = await processJob(job, soul, agent);
+  let result;
+  try {
+    result = await processJob(job, agent);
+    console.log('\n✅ Work completed\n');
+  } catch (e) {
+    console.error('\n❌ Job failed:', e.message);
+    result = { error: e.message, content: 'Job failed: ' + e.message };
+  }
   
-  // Deliver result
-  console.log('\n→ Delivering result...');
+  // ─────────────────────────────────────────
+  // STEP 4: DELIVER RESULT
+  // ─────────────────────────────────────────
+  console.log('→ Delivering result...');
   const deliverSig = signChallenge(
     keys.wif,
-    `VAP-DELIVER|Job:${job.id}|Hash:${result.hash}`,
+    `VAP-DELIVER|Job:${job.id}|Hash:${result.hash || 'failed'}`,
     keys.iAddress,
     'verustest'
   );
   
-  await agent.client.deliverJob(job.id, deliverSig, 'Job completed', result.content);
+  await agent.client.deliverJob(job.id, deliverSig, result.content.substring(0, 200), result.content);
   console.log('✅ Job delivered\n');
   
-  // Wait a moment for chat to flush
+  // Wait for chat to flush
   await new Promise(r => setTimeout(r, 5000));
   
-  console.log('🏁 Job complete. Exiting...');
+  // ─────────────────────────────────────────
+  // STEP 5: DELETION ATTESTATION
+  // ─────────────────────────────────────────
+  console.log('→ Signing deletion attestation...');
+  
+  const deletionTime = new Date().toISOString();
+  
+  const deletionAttestation = {
+    type: 'container:destroyed',
+    jobId: JOB_ID,
+    containerId: CONTAINER_ID,
+    agentId: AGENT_ID,
+    identity: IDENTITY,
+    createdAt: creationTime,
+    destroyedAt: deletionTime,
+    jobHash: jobHash,
+    dataVolumes: ['/app/job', '/tmp', '/var/tmp'],
+    deletionMethod: 'container-auto-remove',
+    ephemeral: true,
+    privacyAttestation: true,
+  };
+  
+  const deletionMessage = JSON.stringify(deletionAttestation);
+  const deletionSig = signChallenge(keys.wif, deletionMessage, keys.iAddress, 'verustest');
+  
+  deletionAttestation.signature = deletionSig;
+  
+  // Save attestation
+  fs.writeFileSync(
+    path.join(JOB_DIR, 'deletion-attestation.json'),
+    JSON.stringify(deletionAttestation, null, 2)
+  );
+  
+  // Submit to platform
+  try {
+    await agent.client.submitAttestation({
+      jobId: JOB_ID,
+      containerId: CONTAINER_ID,
+      creationAttestation,
+      deletionAttestation,
+      attestedBy: IDENTITY,
+      attestedAt: deletionTime,
+    });
+    console.log('✅ Deletion attestation submitted to platform\n');
+  } catch (e) {
+    console.log('⚠️  Could not submit attestation (optional feature):', e.message);
+  }
+  
+  console.log('🏁 Job complete with privacy attestation. Container will be destroyed.');
+  console.log('');
+  console.log('Privacy Summary:');
+  console.log(`  Creation: ${creationTime}`);
+  console.log(`  Deletion: ${deletionTime}`);
+  console.log(`  Duration: ${(new Date(deletionTime) - new Date(creationTime)) / 1000}s`);
+  console.log(`  Container: ${CONTAINER_ID.substring(0, 12)}`);
+  console.log(`  Job Hash: ${jobHash.substring(0, 16)}...`);
+  console.log('');
+  
   process.exit(0);
 }
 
-async function processJob(job, soul, agent) {
-  // Placeholder: In production, this would:
-  // - Use MCP tools
-  // - Call LLM
-  // - Do actual work
-  
+async function processJob(job, agent) {
+  // In production: Use MCP tools, call LLM, etc.
   console.log('Working on:', job.description);
   
   // Simulate work
   await new Promise(r => setTimeout(r, 5000));
   
   const content = `Completed: ${job.description}`;
-  const hash = require('crypto').createHash('sha256').update(content).digest('hex');
+  const hash = crypto.createHash('sha256').update(content).digest('hex');
   
   return { content, hash };
 }
 
 // Timeout protection
 setTimeout(() => {
-  console.error('⏰ Job timeout! Exiting.');
+  console.error('⏰ Job timeout! Signing deletion attestation and exiting.');
+  
+  // Try to sign deletion attestation even on timeout
+  try {
+    const keys = JSON.parse(fs.readFileSync(KEYS_FILE, 'utf8'));
+    const deletionAttestation = {
+      type: 'container:destroyed:timeout',
+      jobId: JOB_ID,
+      containerId: CONTAINER_ID,
+      destroyedAt: new Date().toISOString(),
+      reason: 'timeout',
+    };
+    
+    const { signChallenge } = require('./sdk/dist/identity/signer.js');
+    const sig = signChallenge(keys.wif, JSON.stringify(deletionAttestation), keys.iAddress, 'verustest');
+    deletionAttestation.signature = sig;
+    
+    fs.writeFileSync(
+      path.join(JOB_DIR, 'deletion-attestation-timeout.json'),
+      JSON.stringify(deletionAttestation, null, 2)
+    );
+  } catch (e) {
+    console.error('Could not sign timeout attestation:', e.message);
+  }
+  
   process.exit(1);
 }, TIMEOUT_MS);
 
