@@ -72,20 +72,50 @@ function isFinalizedReady(agentId) {
 
 function createFinalizeHooks(agentId, identityName, profile, services = []) {
   const agentDir = path.join(AGENTS_DIR, agentId);
+  const keys = loadAgentKeys(agentId) || {};
+  const primaryaddresses = Array.isArray(keys.primaryaddresses)
+    ? keys.primaryaddresses
+    : (keys.address ? [keys.address] : []);
   const planPath = path.join(agentDir, 'vdxf-update.json');
   const cmdPath = path.join(agentDir, 'vdxf-update.cmd');
 
   return {
     publishVdxf: async () => {
       const {
-        buildAgentContentMultimap,
-        buildUpdateIdentityPayload,
+        VDXF_KEYS,
+        buildCanonicalAgentUpdate,
         buildUpdateIdentityCommand,
         getCanonicalVdxfDefinitionCount,
       } = require('../vap-agent-sdk/dist/index.js');
 
-      const contentmultimap = buildAgentContentMultimap(profile, services);
-      const payload = buildUpdateIdentityPayload(identityName, contentmultimap);
+      const fields = profile
+        ? {
+            version: '1',
+            type: profile.type,
+            name: profile.name,
+            description: profile.description,
+            status: 'active',
+            services: services.map((svc) => ({
+              name: svc.name,
+              description: svc.description,
+              category: svc.category,
+              price: svc.price,
+              currency: svc.currency,
+              turnaround: svc.turnaround,
+              status: 'active',
+            })),
+          }
+        : { services: [] };
+
+      const payload = buildCanonicalAgentUpdate({
+        fullName: identityName,
+        parent: 'agentplatform',
+        primaryaddresses,
+        minimumsignatures: keys.minimumsignatures || 1,
+        vdxfKeys: VDXF_KEYS.agent,
+        fields,
+      });
+
       const command = buildUpdateIdentityCommand(payload, 'verustest');
 
       fs.writeFileSync(planPath, JSON.stringify({
