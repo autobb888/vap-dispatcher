@@ -70,6 +70,59 @@ function isFinalizedReady(agentId) {
   return !!state && state.stage === 'ready';
 }
 
+function createFinalizeHooks(agentId, identityName, profile, services = []) {
+  const agentDir = path.join(AGENTS_DIR, agentId);
+  const planPath = path.join(agentDir, 'vdxf-update.json');
+  const cmdPath = path.join(agentDir, 'vdxf-update.cmd');
+
+  return {
+    publishVdxf: async () => {
+      const {
+        buildAgentContentMultimap,
+        buildUpdateIdentityPayload,
+        buildUpdateIdentityCommand,
+        getCanonicalVdxfDefinitionCount,
+      } = require('../vap-agent-sdk/dist/index.js');
+
+      const contentmultimap = buildAgentContentMultimap(profile, services);
+      const payload = buildUpdateIdentityPayload(identityName, contentmultimap);
+      const command = buildUpdateIdentityCommand(payload, 'verustest');
+
+      fs.writeFileSync(planPath, JSON.stringify({
+        generatedAt: new Date().toISOString(),
+        identity: identityName,
+        canonicalDefinitionCount: getCanonicalVdxfDefinitionCount(),
+        payload,
+      }, null, 2));
+      fs.writeFileSync(cmdPath, `${command}\n`);
+      fs.chmodSync(cmdPath, 0o700);
+
+      if (process.env.VAP_AUTO_UPDATEIDENTITY === '1') {
+        console.log(`   ↳ Executing updateidentity for ${identityName}`);
+        const out = spawn('bash', ['-lc', command], { stdio: ['ignore', 'pipe', 'pipe'] });
+        await new Promise((resolve, reject) => {
+          let stderr = '';
+          out.stderr.on('data', d => stderr += d.toString());
+          out.on('close', code => code === 0 ? resolve() : reject(new Error(stderr || `updateidentity failed (${code})`)));
+        });
+      } else {
+        console.log(`   ↳ VDXF update command written: ${cmdPath}`);
+        console.log('   ↳ Set VAP_AUTO_UPDATEIDENTITY=1 to auto-execute during finalize');
+      }
+    },
+    verifyVdxf: async () => {
+      if (process.env.VAP_AUTO_UPDATEIDENTITY === '1') {
+        console.log('   ↳ Auto-update enabled; basic verification deferred to index stage');
+      } else {
+        console.log('   ↳ Verification deferred (manual updateidentity mode)');
+      }
+    },
+    waitForIndexed: async () => {
+      console.log('   ↳ Index visibility check deferred (implement API/RPC verification hook next)');
+    },
+  };
+}
+
 function getActiveJobs() {
   // Find running containers named vap-job-*
   return docker.listContainers().then(containers => {
@@ -194,19 +247,22 @@ program
         const finalizeStatePath = path.join(AGENTS_DIR, agentId, FINALIZE_STATE_FILENAME);
         console.log(`\n→ Finalizing onboarding (${options.interactive ? 'interactive' : 'headless'})...`);
 
+        const profile = options.interactive
+          ? undefined
+          : (options.profileName && options.profileDescription
+            ? {
+                name: options.profileName,
+                type: options.profileType,
+                description: options.profileDescription,
+              }
+            : undefined);
+
         const finalizeResult = await finalizeOnboarding({
           agent,
           statePath: finalizeStatePath,
           mode: options.interactive ? 'interactive' : 'headless',
-          profile: options.interactive
-            ? undefined
-            : (options.profileName && options.profileDescription
-              ? {
-                  name: options.profileName,
-                  type: options.profileType,
-                  description: options.profileDescription,
-                }
-              : undefined),
+          profile,
+          hooks: createFinalizeHooks(agentId, keys.identity, profile),
         });
 
         console.log(`✅ Finalize stage: ${finalizeResult.stage}`);
@@ -250,19 +306,22 @@ program
     const finalizeStatePath = path.join(AGENTS_DIR, agentId, FINALIZE_STATE_FILENAME);
     console.log(`\n→ Finalizing ${agentId} (${options.interactive ? 'interactive' : 'headless'})...`);
 
+    const profile = options.interactive
+      ? undefined
+      : (options.profileName && options.profileDescription
+        ? {
+            name: options.profileName,
+            type: options.profileType,
+            description: options.profileDescription,
+          }
+        : undefined);
+
     const finalizeResult = await finalizeOnboarding({
       agent,
       statePath: finalizeStatePath,
       mode: options.interactive ? 'interactive' : 'headless',
-      profile: options.interactive
-        ? undefined
-        : (options.profileName && options.profileDescription
-          ? {
-              name: options.profileName,
-              type: options.profileType,
-              description: options.profileDescription,
-            }
-          : undefined),
+      profile,
+      hooks: createFinalizeHooks(agentId, keys.identity, profile),
     });
 
     console.log(`✅ Finalize stage: ${finalizeResult.stage}`);
