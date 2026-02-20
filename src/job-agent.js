@@ -122,7 +122,7 @@ async function main() {
   };
   
   const creationMessage = JSON.stringify(creationAttestation);
-  const { signChallenge } = require('./sdk/dist/identity/signer.js');
+  const { signChallenge, signMessage } = require('./sdk/dist/identity/signer.js');
   const creationSig = signChallenge(keys.wif, creationMessage, keys.iAddress, 'verustest');
   
   creationAttestation.signature = creationSig;
@@ -146,7 +146,7 @@ async function main() {
   const fullJob = await agent.client.getJob(job.id);
   const acceptMessage = `VAP-ACCEPT|Job:${fullJob.jobHash}|Buyer:${fullJob.buyerVerusId}|Amt:${fullJob.amount} ${fullJob.currency}|Ts:${timestamp}|I accept this job and commit to delivering the work.`;
 
-  const acceptSig = signChallenge(keys.wif, acceptMessage, keys.iAddress, 'verustest');
+  const acceptSig = signMessage(keys.wif, acceptMessage, 'verustest');
 
   await agent.client.acceptJob(job.id, acceptSig, timestamp);
   console.log('✅ Job accepted\n');
@@ -173,10 +173,9 @@ async function main() {
   // STEP 4: DELIVER RESULT
   // ─────────────────────────────────────────
   console.log('→ Delivering result...');
-  const deliverSig = signChallenge(
+  const deliverSig = signMessage(
     keys.wif,
     `VAP-DELIVER|Job:${job.id}|Hash:${result.hash || 'failed'}`,
-    keys.iAddress,
     'verustest'
   );
   
