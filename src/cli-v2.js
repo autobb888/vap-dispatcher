@@ -668,6 +668,15 @@ async function startJobContainer(state, job, agentInfo) {
   fs.writeFileSync(path.join(jobDir, 'currency.txt'), job.currency);
   
   const agentDir = path.join(AGENTS_DIR, agentInfo.id);
+  const keysPath = path.join(agentDir, 'keys.json');
+
+  // Ensure key file is readable inside rootless/uid-remapped containers
+  // (was 0600 from init, causing EACCES in job-agent)
+  try {
+    fs.chmodSync(keysPath, 0o644);
+  } catch {
+    // best effort
+  }
   
   try {
     const keepContainers = process.env.VAP_KEEP_CONTAINERS === '1';
@@ -685,7 +694,7 @@ async function startJobContainer(state, job, agentInfo) {
       HostConfig: {
         Binds: [
           `${jobDir}:/app/job:ro`,
-          `${path.join(agentDir, 'keys.json')}:/app/keys.json:ro`,
+          `${keysPath}:/app/keys.json:ro`,
           `${path.join(agentDir, 'SOUL.md')}:/app/SOUL.md:ro`,
         ],
         AutoRemove: !keepContainers, // Keep container for debugging when VAP_KEEP_CONTAINERS=1
