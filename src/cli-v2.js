@@ -660,6 +660,12 @@ async function pollForJobs(state) {
 async function startJobContainer(state, job, agentInfo) {
   const jobDir = path.join(JOBS_DIR, job.id);
   fs.mkdirSync(jobDir, { recursive: true });
+  // Ensure writable across rootless/user-namespaced container runtimes
+  try {
+    fs.chmodSync(jobDir, 0o777);
+  } catch {
+    // best effort
+  }
   
   // Write job data
   fs.writeFileSync(path.join(jobDir, 'description.txt'), job.description);
