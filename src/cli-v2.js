@@ -347,13 +347,10 @@ async function pollForJobs(state) {
 
       // Login to establish authenticated session cookie
       const challengeRes = await agent.client.getAuthChallenge();
-      const { signChallenge } = require('../vap-agent-sdk/dist/identity/signer.js');
-      const loginSig = signChallenge(
-        agentInfo.wif,
-        challengeRes.challenge,
-        agentInfo.iAddress || agentInfo.address,
-        'verustest'
-      );
+      const { signMessage } = require('../vap-agent-sdk/dist/identity/signer.js');
+      // /auth/login verifies with verusd verifymessage(verusId, challenge, signature)
+      // so use standard Verus signed-message format here.
+      const loginSig = signMessage(agentInfo.wif, challengeRes.challenge, 'verustest');
 
       const loginRes = await fetch(`${baseUrl}/auth/login`, {
         method: 'POST',
