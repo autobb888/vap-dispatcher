@@ -18,6 +18,7 @@ const DISPATCHER_DIR = path.join(VAP_DIR, 'dispatcher');
 const AGENTS_DIR = path.join(DISPATCHER_DIR, 'agents');
 const QUEUE_DIR = path.join(DISPATCHER_DIR, 'queue');
 const JOBS_DIR = path.join(DISPATCHER_DIR, 'jobs');
+const SEEN_JOBS_PATH = path.join(DISPATCHER_DIR, 'seen-jobs.json');
 const FINALIZE_STATE_FILENAME = 'finalize-state.json';
 
 const MAX_AGENTS = 9;
@@ -68,6 +69,21 @@ function loadFinalizeState(agentId) {
 function isFinalizedReady(agentId) {
   const state = loadFinalizeState(agentId);
   return !!state && state.stage === 'ready';
+}
+
+function loadSeenJobs() {
+  if (!fs.existsSync(SEEN_JOBS_PATH)) return new Set();
+  try {
+    const arr = JSON.parse(fs.readFileSync(SEEN_JOBS_PATH, 'utf8'));
+    return new Set(Array.isArray(arr) ? arr : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function saveSeenJobs(seen) {
+  const arr = Array.from(seen);
+  fs.writeFileSync(SEEN_JOBS_PATH, JSON.stringify(arr, null, 2));
 }
 
 function createFinalizeHooks(agentId, identityName, profile, services = []) {
@@ -416,6 +432,7 @@ program
       active: new Map(), // jobId -> { agentId, container, startedAt }
       available: [...readyAgents], // pool of idle agents
       queue: [], // pending jobs
+      seen: loadSeenJobs(), // completed/claimed jobs to avoid duplicate pickup
     };
     
     // Poll for jobs
@@ -600,7 +617,11 @@ async function pollForJobs(state) {
           continue;
         }
 
-        // Check if already handling this job
+        // Check if already handling or already processed
+        if (state.seen.has(job.id)) {
+          console.log(`[Poll] ${agentInfo.id} skipping ${job.id} (already seen)`);
+          continue;
+        }
         if (state.active.has(job.id)) {
           console.log(`[Poll] ${agentInfo.id} skipping ${job.id} (already active)`);
           continue;
@@ -690,6 +711,10 @@ async function startJobContainer(state, job, agentInfo) {
       startedAt: Date.now(),
       agentInfo,
     });
+
+    // Mark as seen immediately to avoid duplicate pickup loops while status remains requested
+    state.seen.add(job.id);
+    saveSeenJobs(state.seen);
     
     // Remove from available pool
     state.available = state.available.filter(a => a.id !== agentInfo.id);
@@ -721,7 +746,11 @@ async function stopJobContainer(state, jobId) {
     await active.container.stop();
     // AutoRemove will delete it
   } catch (e) {
-    console.error(`[Cleanup] Error stopping ${jobId}:`, e.message);
+    if (String(e.message || '').includes('404') || String(e.message || '').includes('No such container')) {
+      // already gone; ignore noisy Docker cleanup errors
+    } else {
+      console.error(`[Cleanup] Error stopping ${jobId}:`, e.message);
+    }
   }
   
   // Cleanup job dir
