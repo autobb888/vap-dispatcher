@@ -18,6 +18,7 @@ const DISPATCHER_DIR = path.join(VAP_DIR, 'dispatcher');
 const AGENTS_DIR = path.join(DISPATCHER_DIR, 'agents');
 const QUEUE_DIR = path.join(DISPATCHER_DIR, 'queue');
 const JOBS_DIR = path.join(DISPATCHER_DIR, 'jobs');
+const FINALIZE_STATE_FILENAME = 'finalize-state.json';
 
 const MAX_AGENTS = 9;
 const JOB_TIMEOUT_MS = 60 * 60 * 1000; // 1 hour
@@ -49,6 +50,24 @@ function listRegisteredAgents() {
     const keysPath = path.join(AGENTS_DIR, name, 'keys.json');
     return fs.existsSync(keysPath);
   });
+}
+
+function loadFinalizeState(agentId) {
+  if (!/^agent-[1-9][0-9]*$/.test(agentId)) {
+    throw new Error('Invalid agent ID format');
+  }
+  const p = path.join(AGENTS_DIR, agentId, FINALIZE_STATE_FILENAME);
+  if (!fs.existsSync(p)) return null;
+  try {
+    return JSON.parse(fs.readFileSync(p, 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+function isFinalizedReady(agentId) {
+  const state = loadFinalizeState(agentId);
+  return !!state && state.stage === 'ready';
 }
 
 function getActiveJobs() {
@@ -132,7 +151,12 @@ program
 program
   .command('register <agent-id> <identity-name>')
   .description('Register an agent identity on VAP platform')
-  .action(async (agentId, identityName) => {
+  .option('--finalize', 'Run onboarding finalization after identity registration')
+  .option('--interactive', 'Interactive finalize mode (prompts for profile/service)')
+  .option('--profile-name <name>', 'Profile display name for headless finalize')
+  .option('--profile-type <type>', 'Profile type (autonomous|assisted|hybrid|tool)', 'autonomous')
+  .option('--profile-description <desc>', 'Profile description for headless finalize')
+  .action(async (agentId, identityName, options) => {
     ensureDirs();
     
     const keys = loadAgentKeys(agentId);
@@ -164,9 +188,87 @@ program
       console.log(`\n✅ ${agentId} registered!`);
       console.log(`   Identity: ${result.identity}`);
       console.log(`   i-Address: ${result.iAddress}`);
+
+      if (options.finalize) {
+        const { finalizeOnboarding } = require('../vap-agent-sdk/dist/index.js');
+        const finalizeStatePath = path.join(AGENTS_DIR, agentId, FINALIZE_STATE_FILENAME);
+        console.log(`\n→ Finalizing onboarding (${options.interactive ? 'interactive' : 'headless'})...`);
+
+        const finalizeResult = await finalizeOnboarding({
+          agent,
+          statePath: finalizeStatePath,
+          mode: options.interactive ? 'interactive' : 'headless',
+          profile: options.interactive
+            ? undefined
+            : (options.profileName && options.profileDescription
+              ? {
+                  name: options.profileName,
+                  type: options.profileType,
+                  description: options.profileDescription,
+                }
+              : undefined),
+        });
+
+        console.log(`✅ Finalize stage: ${finalizeResult.stage}`);
+        console.log(`   State file: ${finalizeStatePath}`);
+      }
     } catch (e) {
       console.error(`\n❌ Registration failed: ${e.message}`);
       process.exit(1);
+    }
+  });
+
+// Finalize command — complete post-onboard lifecycle
+program
+  .command('finalize <agent-id>')
+  .description('Finalize onboarding lifecycle (VDXF/profile/service readiness)')
+  .option('--interactive', 'Interactive finalize mode (prompts for profile/service)')
+  .option('--profile-name <name>', 'Profile display name for headless finalize')
+  .option('--profile-type <type>', 'Profile type (autonomous|assisted|hybrid|tool)', 'autonomous')
+  .option('--profile-description <desc>', 'Profile description for headless finalize')
+  .action(async (agentId, options) => {
+    ensureDirs();
+
+    const keys = loadAgentKeys(agentId);
+    if (!keys) {
+      console.error(`❌ Agent ${agentId} not found. Run: vap-dispatcher init`);
+      process.exit(1);
+    }
+    if (!keys.identity) {
+      console.error(`❌ Agent ${agentId} has no platform identity. Run register first.`);
+      process.exit(1);
+    }
+
+    const { VAPAgent, finalizeOnboarding } = require('../vap-agent-sdk/dist/index.js');
+    const agent = new VAPAgent({
+      vapUrl: process.env.VAP_API_URL || 'https://api.autobb.app',
+      wif: keys.wif,
+      identityName: keys.identity,
+      iAddress: keys.iAddress,
+    });
+
+    const finalizeStatePath = path.join(AGENTS_DIR, agentId, FINALIZE_STATE_FILENAME);
+    console.log(`\n→ Finalizing ${agentId} (${options.interactive ? 'interactive' : 'headless'})...`);
+
+    const finalizeResult = await finalizeOnboarding({
+      agent,
+      statePath: finalizeStatePath,
+      mode: options.interactive ? 'interactive' : 'headless',
+      profile: options.interactive
+        ? undefined
+        : (options.profileName && options.profileDescription
+          ? {
+              name: options.profileName,
+              type: options.profileType,
+              description: options.profileDescription,
+            }
+          : undefined),
+    });
+
+    console.log(`✅ Finalize stage: ${finalizeResult.stage}`);
+    console.log(`   State file: ${finalizeStatePath}`);
+    if (finalizeResult.stage !== 'ready') {
+      console.log('ℹ️  Finalization can be resumed by rerunning this command.');
     }
   });
 
@@ -193,15 +295,22 @@ program
     console.log(`Job timeout: ${JOB_TIMEOUT_MS / 60000} min`);
     console.log('Privacy: Creation + Deletion attestations\n');
     
-    // Check which agents are registered on platform
+    // Check which agents are registered on platform (+ optional finalize readiness)
+    const enforceFinalize = process.env.VAP_REQUIRE_FINALIZE === '1';
     const readyAgents = [];
     for (const agentId of agents) {
       const keys = loadAgentKeys(agentId);
-      if (keys?.identity) {
-        readyAgents.push({ id: agentId, ...keys });
-      } else {
+      if (!keys?.identity) {
         console.log(`⚠️  ${agentId}: not registered on platform`);
+        continue;
       }
+
+      if (enforceFinalize && !isFinalizedReady(agentId)) {
+        console.log(`⚠️  ${agentId}: finalize state not ready (set VAP_REQUIRE_FINALIZE=0 to bypass)`);
+        continue;
+      }
+
+      readyAgents.push({ id: agentId, ...keys });
     }
     
     if (readyAgents.length === 0) {
@@ -259,7 +368,9 @@ program
     console.log('║     Dispatcher Status                    ║');
     console.log('╚══════════════════════════════════════════╝\n');
     
+    const finalized = agents.filter(a => isFinalizedReady(a)).length;
     console.log(`Agents: ${agents.length} registered`);
+    console.log(`Finalized ready: ${finalized}/${agents.length}`);
     console.log(`Active jobs: ${activeJobs.length}/${MAX_AGENTS}`);
     console.log(`Queue: ${queueFiles.length} pending\n`);
     
