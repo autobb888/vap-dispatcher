@@ -86,7 +86,7 @@ async function main() {
   });
 
   // Establish authenticated API session before job actions
-  await agent.login();
+  await authenticateAgent(agent, keys);
   console.log('✅ Agent logged in\n');
   
   // ─────────────────────────────────────────
@@ -245,6 +245,36 @@ async function main() {
   console.log('');
   
   process.exit(0);
+}
+
+async function authenticateAgent(agent, keys) {
+  const { signMessage } = require('./sdk/dist/identity/signer.js');
+
+  const challengeRes = await agent.client.getAuthChallenge();
+  const signature = signMessage(keys.wif, challengeRes.challenge, 'verustest');
+
+  const loginRes = await fetch(`${API_URL}/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      challengeId: challengeRes.challengeId,
+      verusId: IDENTITY,
+      signature,
+    }),
+  });
+
+  if (!loginRes.ok) {
+    const body = await loginRes.text();
+    throw new Error(`Login failed: ${body}`);
+  }
+
+  const setCookie = loginRes.headers.get('set-cookie') || '';
+  const match = setCookie.match(/verus_session=([^;]+)/);
+  if (!match) {
+    throw new Error('Login succeeded but no verus_session cookie returned');
+  }
+
+  agent.client.setSessionToken(match[1]);
 }
 
 async function processJob(job, agent) {
