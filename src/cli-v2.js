@@ -398,6 +398,7 @@ program
     console.log(`Registered agents: ${agents.length}`);
     console.log(`Max concurrent: ${MAX_AGENTS}`);
     console.log(`Job timeout: ${JOB_TIMEOUT_MS / 60000} min`);
+    console.log(`Keep containers: ${process.env.VAP_KEEP_CONTAINERS === '1' ? 'ON (debug)' : 'OFF'}`);
     console.log('Privacy: Creation + Deletion attestations\n');
     
     // Check which agents are registered on platform (+ optional finalize readiness)
@@ -669,6 +670,8 @@ async function startJobContainer(state, job, agentInfo) {
   const agentDir = path.join(AGENTS_DIR, agentInfo.id);
   
   try {
+    const keepContainers = process.env.VAP_KEEP_CONTAINERS === '1';
+
     const container = await docker.createContainer({
       name: `vap-job-${job.id}`,
       Image: 'vap/job-agent:latest',  // PRE-BAKED IMAGE
@@ -685,7 +688,7 @@ async function startJobContainer(state, job, agentInfo) {
           `${path.join(agentDir, 'keys.json')}:/app/keys.json:ro`,
           `${path.join(agentDir, 'SOUL.md')}:/app/SOUL.md:ro`,
         ],
-        AutoRemove: true, // Destroy on stop
+        AutoRemove: !keepContainers, // Keep container for debugging when VAP_KEEP_CONTAINERS=1
         Memory: 2 * 1024 * 1024 * 1024, // 2GB limit
         CpuQuota: 100000, // 1 CPU core
         // Security: No new privileges
@@ -753,9 +756,9 @@ async function stopJobContainer(state, jobId) {
     }
   }
   
-  // Cleanup job dir
+  // Cleanup job dir (retain for debugging if requested)
   const jobDir = path.join(JOBS_DIR, jobId);
-  if (fs.existsSync(jobDir)) {
+  if (fs.existsSync(jobDir) && process.env.VAP_KEEP_CONTAINERS !== '1') {
     fs.rmSync(jobDir, { recursive: true });
   }
   
