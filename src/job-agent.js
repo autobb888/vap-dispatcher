@@ -84,6 +84,10 @@ async function main() {
     identityName: IDENTITY,
     iAddress: keys.iAddress,
   });
+
+  // Establish authenticated API session before job actions
+  await agent.login();
+  console.log('✅ Agent logged in\n');
   
   // ─────────────────────────────────────────
   // STEP 1: CREATION ATTESTATION
@@ -137,10 +141,13 @@ async function main() {
   console.log('→ Accepting job...');
   
   const timestamp = Math.floor(Date.now() / 1000);
-  const acceptMessage = `VAP-ACCEPT|Job:${job.id}|Buyer:${job.buyer}|Amt:${job.amount} ${job.currency}|Ts:${timestamp}|I accept this job.`;
-  
+
+  // Fetch canonical job data and match SDK acceptance message format exactly
+  const fullJob = await agent.client.getJob(job.id);
+  const acceptMessage = `VAP-ACCEPT|Job:${fullJob.jobHash}|Buyer:${fullJob.buyerVerusId}|Amt:${fullJob.amount} ${fullJob.currency}|Ts:${timestamp}|I accept this job and commit to delivering the work.`;
+
   const acceptSig = signChallenge(keys.wif, acceptMessage, keys.iAddress, 'verustest');
-  
+
   await agent.client.acceptJob(job.id, acceptSig, timestamp);
   console.log('✅ Job accepted\n');
   
