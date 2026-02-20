@@ -693,7 +693,8 @@ async function startJobContainer(state, job, agentInfo) {
       ],
       HostConfig: {
         Binds: [
-          `${jobDir}:/app/job:ro`,
+          // job dir must be writable for attestation artifacts (creation/deletion json)
+          `${jobDir}:/app/job`,
           `${keysPath}:/app/keys.json:ro`,
           `${path.join(agentDir, 'SOUL.md')}:/app/SOUL.md:ro`,
         ],
