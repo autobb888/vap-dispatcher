@@ -345,15 +345,44 @@ async function pollForJobs(state) {
         iAddress: agentInfo.iAddress,
       });
 
-      // Quick login to get session
+      // Login to establish authenticated session cookie
       const challengeRes = await agent.client.getAuthChallenge();
       const { signChallenge } = require('../vap-agent-sdk/dist/identity/signer.js');
-      const sig = signChallenge(agentInfo.wif, challengeRes.challenge, agentInfo.iAddress, 'verustest');
+      const loginSig = signChallenge(
+        agentInfo.wif,
+        challengeRes.challenge,
+        agentInfo.iAddress || agentInfo.address,
+        'verustest'
+      );
 
-      // Fetch pending jobs
+      const loginRes = await fetch(`${baseUrl}/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          challengeId: challengeRes.challengeId,
+          verusId: agentInfo.identity,
+          signature: loginSig,
+        }),
+      });
+
+      if (!loginRes.ok) {
+        const body = await loginRes.text();
+        console.error(`[Poll] ${agentInfo.id} login HTTP ${loginRes.status} ${loginRes.statusText}`);
+        console.error(`[Poll] ${agentInfo.id} login response: ${body.slice(0, 200)}`);
+        continue;
+      }
+
+      const cookies = loginRes.headers.get('set-cookie') || '';
+      if (!cookies) {
+        console.error(`[Poll] ${agentInfo.id} login returned no set-cookie`);
+        continue;
+      }
+
+      // Fetch pending jobs with session cookie
       const resp = await fetch(`${baseUrl}/v1/me/jobs?status=requested&role=seller`, {
         headers: {
-          'Authorization': `Bearer ${challengeRes.challengeId}.${sig}`
+          'Cookie': cookies,
+          'Accept': 'application/json',
         }
       });
 
