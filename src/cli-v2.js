@@ -332,40 +332,60 @@ program
 async function pollForJobs(state) {
   // Get jobs from all available agents
   const { VAPAgent } = require('../vap-agent-sdk/dist/index.js');
-  
+  const baseUrl = process.env.VAP_API_URL || 'https://api.autobb.app';
+
   for (const agentInfo of [...state.available]) {
     try {
+      console.log(`[Poll] Checking ${agentInfo.id} (${agentInfo.identity || agentInfo.address})`);
+
       const agent = new VAPAgent({
-        vapUrl: process.env.VAP_API_URL || 'https://api.autobb.app',
+        vapUrl: baseUrl,
         wif: agentInfo.wif,
         identityName: agentInfo.identity,
         iAddress: agentInfo.iAddress,
       });
-      
+
       // Quick login to get session
       const challengeRes = await agent.client.getAuthChallenge();
       const { signChallenge } = require('../vap-agent-sdk/dist/identity/signer.js');
       const sig = signChallenge(agentInfo.wif, challengeRes.challenge, agentInfo.iAddress, 'verustest');
-      
+
       // Fetch pending jobs
-      const resp = await fetch(`${process.env.VAP_API_URL || 'https://api.autobb.app'}/v1/me/jobs?status=requested&role=seller`, {
+      const resp = await fetch(`${baseUrl}/v1/me/jobs?status=requested&role=seller`, {
         headers: {
           'Authorization': `Bearer ${challengeRes.challengeId}.${sig}`
         }
       });
-      
-      if (!resp.ok) continue;
-      
-      const { jobs } = await resp.json();
-      
+
+      if (!resp.ok) {
+        const body = await resp.text();
+        console.error(`[Poll] ${agentInfo.id} HTTP ${resp.status} ${resp.statusText}`);
+        console.error(`[Poll] ${agentInfo.id} response: ${body.slice(0, 200)}`);
+        continue;
+      }
+
+      const data = await resp.json();
+      const jobs = Array.isArray(data?.jobs) ? data.jobs : (Array.isArray(data?.data) ? data.data : []);
+      console.log(`[Poll] ${agentInfo.id} jobs fetched: ${jobs.length}`);
+
       for (const job of jobs) {
-        // Check if already handling this job
-        if (state.active.has(job.id) || state.queue.some(j => j.id === job.id)) {
+        if (!job?.id) {
+          console.warn(`[Poll] ${agentInfo.id} skipping malformed job:`, JSON.stringify(job).slice(0, 160));
           continue;
         }
-        
+
+        // Check if already handling this job
+        if (state.active.has(job.id)) {
+          console.log(`[Poll] ${agentInfo.id} skipping ${job.id} (already active)`);
+          continue;
+        }
+        if (state.queue.some(j => j.id === job.id)) {
+          console.log(`[Poll] ${agentInfo.id} skipping ${job.id} (already queued)`);
+          continue;
+        }
+
         console.log(`📥 New job: ${job.id} (${job.amount} ${job.currency})`);
-        
+
         if (state.active.size >= MAX_AGENTS) {
           console.log(`   → Queueing (max capacity)`);
           state.queue.push({ ...job, assignedAgent: agentInfo });
