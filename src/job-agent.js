@@ -249,7 +249,23 @@ async function main() {
 async function authenticateAgent(agent, keys) {
   const { signMessage } = require('./sdk/dist/identity/signer.js');
 
-  const challengeRes = await agent.client.getAuthChallenge();
+  let challengeRes = await agent.client.getAuthChallenge();
+  const ch = challengeRes?.data || challengeRes;
+
+  if (!ch?.challenge || !ch?.challengeId) {
+    // Fallback direct request for compatibility with response-shape drift
+    const direct = await fetch(`${API_URL}/auth/challenge`);
+    const raw = await direct.json();
+    const d = raw?.data || raw;
+    challengeRes = d;
+  } else {
+    challengeRes = ch;
+  }
+
+  if (!challengeRes?.challenge || !challengeRes?.challengeId) {
+    throw new Error('Failed to get auth challenge (missing challenge/challengeId)');
+  }
+
   const signature = signMessage(keys.wif, challengeRes.challenge, 'verustest');
 
   const loginRes = await fetch(`${API_URL}/auth/login`, {
