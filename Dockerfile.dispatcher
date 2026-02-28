@@ -20,4 +20,4 @@ COPY src/ ./src/
 EXPOSE 18790 18791
 
 # Start dispatcher
-CMD ["node", "src/cli.js", "start"]
+CMD ["node", "src/cli-v2.js", "start"]

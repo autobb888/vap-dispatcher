@@ -333,9 +333,9 @@ async function main() {
 }
 
 // Graceful shutdown
-process.on('SIGINT', async function() {
-  console.log('\n[DISPATCH] Shutting down...');
-  
+async function shutdown(signal) {
+  console.log('\n[DISPATCH] ' + signal + ' received, shutting down...');
+
   // Destroy all containers
   for (var entry of activeJobs.entries()) {
     var jobId = entry[0];
@@ -349,7 +349,9 @@ process.on('SIGINT', async function() {
   apiProxy.stop();
   console.log('[DISPATCH] Goodbye!');
   process.exit(0);
-});
+}
+process.on('SIGINT', function() { shutdown('SIGINT'); });
+process.on('SIGTERM', function() { shutdown('SIGTERM'); });
 
 main().catch(function(e) {
   console.error('Fatal:', e.message);

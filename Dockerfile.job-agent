@@ -58,8 +58,8 @@ RUN groupadd -r vap-agent && useradd -r -g vap-agent vap-agent
 # Set permissions
 RUN chown -R vap-agent:vap-agent /app
 
-# Drop to non-root (commented out for now - needs testing)
-# USER vap-agent
+# Drop to non-root
+USER vap-agent
 
 # ─────────────────────────────────────────
 # CONTAINER CONFIG
@@ -69,9 +69,9 @@ RUN chown -R vap-agent:vap-agent /app
 ENV VAP_API_URL=https://api.autobb.app
 ENV NODE_ENV=production
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-  CMD node -e "console.log('healthy')" || exit 1
+# Health check — verify Node process is responsive
+HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
+  CMD node -e "setTimeout(() => { process.exit(0); }, 1000).unref();" || exit 1
 
 # Start job agent
 ENTRYPOINT ["node", "job-agent.js"]

@@ -17,6 +17,9 @@ class BridgeServer {
     this.agents = new Map(); // agentId -> ws connection
     this.sessions = new Map(); // sessionId -> agentId
     // P2-2: Simple token secret (in production, use proper key derivation)
+    if (process.env.NODE_ENV === 'production' && !process.env.VAP_BRIDGE_SECRET) {
+      throw new Error('VAP_BRIDGE_SECRET must be set in production');
+    }
     this.tokenSecret = process.env.VAP_BRIDGE_SECRET || 'dev-secret-change-in-production';
   }
   

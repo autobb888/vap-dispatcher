@@ -23,6 +23,8 @@ const FINALIZE_STATE_FILENAME = 'finalize-state.json';
 
 const MAX_AGENTS = 9;
 const JOB_TIMEOUT_MS = 60 * 60 * 1000; // 1 hour
+const MAX_RETRIES = 2;
+const SEEN_JOBS_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
 const docker = new Docker();
 const program = new Command();
@@ -72,18 +74,43 @@ function isFinalizedReady(agentId) {
 }
 
 function loadSeenJobs() {
-  if (!fs.existsSync(SEEN_JOBS_PATH)) return new Set();
+  if (!fs.existsSync(SEEN_JOBS_PATH)) return new Map();
   try {
-    const arr = JSON.parse(fs.readFileSync(SEEN_JOBS_PATH, 'utf8'));
-    return new Set(Array.isArray(arr) ? arr : []);
+    const data = JSON.parse(fs.readFileSync(SEEN_JOBS_PATH, 'utf8'));
+    // Migrate from old array format to timestamped map
+    if (Array.isArray(data)) {
+      const map = new Map();
+      const now = Date.now();
+      data.forEach(id => map.set(id, now));
+      return map;
+    }
+    return new Map(Object.entries(data));
   } catch {
-    return new Set();
+    return new Map();
   }
 }
 
 function saveSeenJobs(seen) {
-  const arr = Array.from(seen);
-  fs.writeFileSync(SEEN_JOBS_PATH, JSON.stringify(arr, null, 2));
+  const obj = Object.fromEntries(seen);
+  fs.writeFileSync(SEEN_JOBS_PATH, JSON.stringify(obj, null, 2));
+}
+
+/**
+ * Prune seen-jobs entries older than SEEN_JOBS_TTL_MS (7 days).
+ */
+function pruneSeenJobs(seen) {
+  const cutoff = Date.now() - SEEN_JOBS_TTL_MS;
+  let pruned = 0;
+  for (const [jobId, ts] of seen) {
+    if (ts < cutoff) {
+      seen.delete(jobId);
+      pruned++;
+    }
+  }
+  if (pruned > 0) {
+    saveSeenJobs(seen);
+    console.log(`[Prune] Removed ${pruned} expired seen-job entries`);
+  }
 }
 
 function createFinalizeHooks(agentId, identityName, profile, services = []) {
@@ -430,10 +457,11 @@ program
     console.log('→ Starting job listener...\n');
     
     const state = {
-      active: new Map(), // jobId -> { agentId, container, startedAt }
+      active: new Map(), // jobId -> { agentId, container, startedAt, retries }
       available: [...readyAgents], // pool of idle agents
       queue: [], // pending jobs
-      seen: loadSeenJobs(), // completed/claimed jobs to avoid duplicate pickup
+      seen: loadSeenJobs(), // completed/claimed jobs with timestamps (Map<jobId, timestamp>)
+      retries: new Map(), // jobId -> retry count
     };
     
     // Poll for jobs
@@ -446,9 +474,10 @@ program
       await cleanupCompletedJobs(state);
     }, 10000); // Every 10s
     
-    // Status report every minute
+    // Status report every minute + prune old seen-jobs
     setInterval(() => {
-      console.log(`[${new Date().toISOString()}] Active: ${state.active.size}/${MAX_AGENTS}, Queue: ${state.queue.length}, Available: ${state.available.length}`);
+      console.log(`[${new Date().toISOString()}] Active: ${state.active.size}/${MAX_AGENTS}, Queue: ${state.queue.length}, Available: ${state.available.length}, Seen: ${state.seen.size}`);
+      pruneSeenJobs(state.seen);
     }, 60000);
     
     // Initial poll
@@ -620,7 +649,7 @@ async function pollForJobs(state) {
 
         // Check if already handling or already processed
         if (state.seen.has(job.id)) {
-          console.log(`[Poll] ${agentInfo.id} skipping ${job.id} (already seen)`);
+          console.log(`[Poll] ${agentInfo.id} skipping ${job.id} (seen)`);
           continue;
         }
         if (state.active.has(job.id)) {
@@ -732,7 +761,7 @@ async function startJobContainer(state, job, agentInfo) {
     });
 
     // Mark as seen immediately to avoid duplicate pickup loops while status remains requested
-    state.seen.add(job.id);
+    state.seen.set(job.id, Date.now());
     saveSeenJobs(state.seen);
     
     // Remove from available pool
@@ -757,10 +786,10 @@ async function startJobContainer(state, job, agentInfo) {
 }
 
 // Stop a job container
-async function stopJobContainer(state, jobId) {
+async function stopJobContainer(state, jobId, skipReturnAgent = false) {
   const active = state.active.get(jobId);
   if (!active) return;
-  
+
   try {
     await active.container.stop();
     // AutoRemove will delete it
@@ -771,29 +800,49 @@ async function stopJobContainer(state, jobId) {
       console.error(`[Cleanup] Error stopping ${jobId}:`, e.message);
     }
   }
-  
+
   // Cleanup job dir (retain for debugging if requested)
   const jobDir = path.join(JOBS_DIR, jobId);
   if (fs.existsSync(jobDir) && process.env.VAP_KEEP_CONTAINERS !== '1') {
     fs.rmSync(jobDir, { recursive: true });
   }
-  
-  // Return agent to pool
-  state.available.push(active.agentInfo);
+
+  // Return agent to pool (unless retrying)
+  if (!skipReturnAgent) {
+    state.available.push(active.agentInfo);
+    state.retries.delete(jobId);
+  }
   state.active.delete(jobId);
-  
-  console.log(`✅ Job ${jobId} complete, agent returned to pool`);
+
+  if (!skipReturnAgent) {
+    console.log(`✅ Job ${jobId} complete, agent returned to pool`);
+  }
 }
 
-// Cleanup completed jobs
+// Cleanup completed jobs — includes retry logic (F-14)
 async function cleanupCompletedJobs(state) {
   for (const [jobId, active] of state.active) {
     try {
       const container = docker.getContainer(`vap-job-${jobId}`);
       const info = await container.inspect();
-      
+
       if (!info.State.Running) {
-        console.log(`🗑️  Container for job ${jobId} stopped`);
+        const exitCode = info.State.ExitCode;
+        console.log(`🗑️  Container for job ${jobId} stopped (exit ${exitCode})`);
+
+        // Retry on non-zero exit if under MAX_RETRIES
+        if (exitCode !== 0) {
+          const retries = state.retries.get(jobId) || 0;
+          if (retries < MAX_RETRIES) {
+            state.retries.set(jobId, retries + 1);
+            console.log(`🔄 Retrying job ${jobId} (attempt ${retries + 2}/${MAX_RETRIES + 1})`);
+            const agentInfo = active.agentInfo;
+            await stopJobContainer(state, jobId, true); // skip returning agent
+            await startJobContainer(state, { id: jobId, description: '', buyerVerusId: '', amount: 0, currency: 'VRSCTEST' }, agentInfo);
+            continue;
+          }
+          console.log(`❌ Job ${jobId} failed after ${MAX_RETRIES + 1} attempts`);
+        }
         await stopJobContainer(state, jobId);
       }
     } catch (e) {

@@ -12,9 +12,11 @@ RUN apt-get update && apt-get install -y \
 # Create app directory
 WORKDIR /app
 
-# Copy SDK
-COPY --from=vap-sdk /app/dist ./sdk/dist
-COPY --from=vap-sdk /app/package.json ./sdk/
+# Copy pre-built SDK from build context
+# Build with: docker build -f Dockerfile.agent --build-context vap-sdk=../vap-agent-sdk .
+# Requires: cd ../vap-agent-sdk && npm run build  (before docker build)
+COPY --from=vap-sdk dist ./sdk/dist
+COPY --from=vap-sdk package.json ./sdk/
 
 # Install SDK dependencies
 RUN cd sdk && npm install --production

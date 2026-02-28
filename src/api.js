@@ -41,7 +41,8 @@ app.get('/api/agents', async (req, res) => {
       })),
     });
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    console.error('[API] Route error:', e);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -54,7 +55,8 @@ app.get('/api/agents/:id', async (req, res) => {
       stats,
     });
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    console.error('[API] Route error:', e);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -65,7 +67,8 @@ app.post('/api/agents/:id/start', async (req, res) => {
     await startAgent(req.params.id);
     res.json({ status: 'started' });
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    console.error('[API] Route error:', e);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -75,7 +78,8 @@ app.post('/api/agents/:id/stop', async (req, res) => {
     await stopAgent(req.params.id);
     res.json({ status: 'stopped' });
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    console.error('[API] Route error:', e);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -90,10 +94,10 @@ app.post('/api/agents/:id/message', async (req, res) => {
   res.json({ sent });
 });
 
-// Global error handler
-app.use((err, req, res, next) => {
+// Global error handler — sanitize responses to avoid leaking internals
+app.use((err, req, res, _next) => {
   console.error('[API] Error:', err);
-  res.status(500).json({ error: err.message });
+  res.status(500).json({ error: 'Internal server error' });
 });
 
 function startApi(port = 18790) {

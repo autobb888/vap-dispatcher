@@ -16,7 +16,7 @@ function init() {
 
 async function login() {
   console.log('[VAP] Logging in...');
-  var res = await fetch(config.vapApi + '/auth/challenge');
+  var res = await fetch(config.vapApi + '/auth/challenge', { signal: AbortSignal.timeout(30000) });
   var data = await res.json();
   var ch = data.data;
   var signature = signChallenge(keys.wif, ch.challenge, config.vapIAddress, 'verustest');
@@ -29,6 +29,7 @@ async function login() {
       verusId: config.vapIdentity,
       signature: signature
     }),
+    signal: AbortSignal.timeout(30000),
   });
 
   var loginData = await loginRes.json();
@@ -48,13 +49,14 @@ async function authFetch(url, options) {
   if (!sessionCookie) await login();
 
   var headers = Object.assign({}, options.headers || {}, { 'Cookie': sessionCookie });
-  var res = await fetch(url, Object.assign({}, options, { headers: headers }));
+  var fetchOpts = Object.assign({}, options, { headers: headers, signal: AbortSignal.timeout(30000) });
+  var res = await fetch(url, fetchOpts);
 
   if (res.status === 401) {
     console.log('[VAP] Session expired, re-authenticating...');
     await login();
     headers = Object.assign({}, options.headers || {}, { 'Cookie': sessionCookie });
-    res = await fetch(url, Object.assign({}, options, { headers: headers }));
+    res = await fetch(url, Object.assign({}, options, { headers: headers, signal: AbortSignal.timeout(30000) }));
   }
   return res;
 }

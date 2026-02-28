@@ -254,7 +254,7 @@ async function authenticateAgent(agent, keys) {
 
   if (!ch?.challenge || !ch?.challengeId) {
     // Fallback direct request for compatibility with response-shape drift
-    const direct = await fetch(`${API_URL}/auth/challenge`);
+    const direct = await fetch(`${API_URL}/auth/challenge`, { signal: AbortSignal.timeout(30000) });
     const raw = await direct.json();
     const d = raw?.data || raw;
     challengeRes = d;
@@ -276,6 +276,7 @@ async function authenticateAgent(agent, keys) {
       verusId: IDENTITY,
       signature,
     }),
+    signal: AbortSignal.timeout(30000),
   });
 
   if (!loginRes.ok) {
