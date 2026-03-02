@@ -592,53 +592,12 @@ async function pollForJobs(state) {
         iAddress: agentInfo.iAddress,
       });
 
-      // Login to establish authenticated session cookie
-      const challengeRes = await agent.client.getAuthChallenge();
-      const { signMessage } = require('../vap-agent-sdk/dist/identity/signer.js');
-      // /auth/login verifies with verusd verifymessage(verusId, challenge, signature)
-      // so use standard Verus signed-message format here.
-      const loginSig = signMessage(agentInfo.wif, challengeRes.challenge, 'verustest');
+      // Login via SDK (handles challenge, signing, session cookie)
+      await agent.authenticate();
 
-      const loginRes = await fetch(`${baseUrl}/auth/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          challengeId: challengeRes.challengeId,
-          verusId: agentInfo.identity,
-          signature: loginSig,
-        }),
-      });
-
-      if (!loginRes.ok) {
-        const body = await loginRes.text();
-        console.error(`[Poll] ${agentInfo.id} login HTTP ${loginRes.status} ${loginRes.statusText}`);
-        console.error(`[Poll] ${agentInfo.id} login response: ${body.slice(0, 200)}`);
-        continue;
-      }
-
-      const cookies = loginRes.headers.get('set-cookie') || '';
-      if (!cookies) {
-        console.error(`[Poll] ${agentInfo.id} login returned no set-cookie`);
-        continue;
-      }
-
-      // Fetch pending jobs with session cookie
-      const resp = await fetch(`${baseUrl}/v1/me/jobs?status=requested&role=seller`, {
-        headers: {
-          'Cookie': cookies,
-          'Accept': 'application/json',
-        }
-      });
-
-      if (!resp.ok) {
-        const body = await resp.text();
-        console.error(`[Poll] ${agentInfo.id} HTTP ${resp.status} ${resp.statusText}`);
-        console.error(`[Poll] ${agentInfo.id} response: ${body.slice(0, 200)}`);
-        continue;
-      }
-
-      const data = await resp.json();
-      const jobs = Array.isArray(data?.jobs) ? data.jobs : (Array.isArray(data?.data) ? data.data : []);
+      // Fetch pending jobs via SDK client
+      const result = await agent.client.getMyJobs({ status: 'requested', role: 'seller' });
+      const jobs = Array.isArray(result?.data) ? result.data : [];
       console.log(`[Poll] ${agentInfo.id} jobs fetched: ${jobs.length}`);
 
       for (const job of jobs) {

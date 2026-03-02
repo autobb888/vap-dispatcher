@@ -1,14 +1,15 @@
 /**
  * Ephemeral Job Agent Runtime with Privacy Attestation
- * 
+ *
  * Signs attestations:
  * 1. CREATION: When container starts (container ID, timestamp, job hash)
  * 2. DELETION: When container destroyed (destruction timestamp, data volumes)
- * 
+ *
  * These are submitted to the platform for privacy verification.
  */
 
-const { VAPAgent } = require('./sdk/dist/index.js');
+const { VAPAgent, buildAcceptMessage, buildDeliverMessage, generateCreationPayload, signCreationAttestation, generateAttestationPayload, signAttestation } = require('./sdk/dist/index.js');
+const { signMessage } = require('./sdk/dist/identity/signer.js');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
@@ -54,15 +55,15 @@ async function main() {
   console.log(`║     Ephemeral Job Agent (Privacy)       ║`);
   console.log(`║     ${AGENT_ID.padEnd(21)}║`);
   console.log(`╚══════════════════════════════════════════╝\n`);
-  
+
   console.log(`Job ID: ${JOB_ID}`);
   console.log(`Identity: ${IDENTITY}`);
   console.log(`Container: ${CONTAINER_ID.substring(0, 12)}`);
   console.log(`Timeout: ${TIMEOUT_MS / 60000} min\n`);
-  
+
   // Load keys
   const keys = JSON.parse(fs.readFileSync(KEYS_FILE, 'utf8'));
-  
+
   // Load job data with input validation (P2-1)
   const job = {
     id: JOB_ID,
@@ -71,12 +72,12 @@ async function main() {
     amount: sanitizeInput(fs.readFileSync(path.join(JOB_DIR, 'amount.txt'), 'utf8')),
     currency: sanitizeInput(fs.readFileSync(path.join(JOB_DIR, 'currency.txt'), 'utf8')),
   };
-  
+
   console.log('Job Details:');
   console.log(`  Description: ${job.description.substring(0, 100)}...`);
   console.log(`  Buyer: ${job.buyer}`);
   console.log(`  Payment: ${job.amount} ${job.currency}\n`);
-  
+
   // Initialize agent
   const agent = new VAPAgent({
     vapUrl: API_URL,
@@ -85,15 +86,15 @@ async function main() {
     iAddress: keys.iAddress,
   });
 
-  // Establish authenticated API session before job actions
-  await authenticateAgent(agent, keys);
+  // Establish authenticated API session via SDK login
+  await agent.authenticate();
   console.log('✅ Agent logged in\n');
-  
+
   // ─────────────────────────────────────────
   // STEP 1: CREATION ATTESTATION
   // ─────────────────────────────────────────
   console.log('→ Signing creation attestation...');
-  
+
   const creationTime = new Date().toISOString();
   // P1-2: Fix job hash construction with structured JSON
   const jobHash = crypto.createHash('sha256')
@@ -106,60 +107,52 @@ async function main() {
       timestamp: creationTime,
     }))
     .digest('hex');
-  
-  const creationAttestation = {
-    type: 'container:created',
+
+  const creationPayload = generateCreationPayload({
     jobId: JOB_ID,
     containerId: CONTAINER_ID,
     agentId: AGENT_ID,
     identity: IDENTITY,
     createdAt: creationTime,
-    jobHash: jobHash,
-    ephemeral: true,
-    memoryLimit: '2GB',
-    cpuLimit: '1 core',
-    privacyTier: 'ephemeral-container',
-  };
-  
-  const creationMessage = JSON.stringify(creationAttestation);
-  const { signChallenge, signMessage } = require('./sdk/dist/identity/signer.js');
-  const creationSig = signChallenge(keys.wif, creationMessage, keys.iAddress, 'verustest');
-  
-  creationAttestation.signature = creationSig;
-  
+    jobHash,
+  });
+
+  const creationAttestation = signCreationAttestation(
+    creationPayload, keys.wif, keys.iAddress, 'verustest'
+  );
+
   // Save to job dir for later
   fs.writeFileSync(
     path.join(JOB_DIR, 'creation-attestation.json'),
     JSON.stringify(creationAttestation, null, 2)
   );
-  
+
   console.log('✅ Creation attestation signed\n');
-  
+
   // ─────────────────────────────────────────
   // STEP 2: ACCEPT JOB
   // ─────────────────────────────────────────
   console.log('→ Accepting job...');
-  
+
   const timestamp = Math.floor(Date.now() / 1000);
 
-  // Fetch canonical job data and match SDK acceptance message format exactly
+  // Fetch canonical job data and build acceptance message via SDK
   const fullJob = await agent.client.getJob(job.id);
-  const acceptMessage = `VAP-ACCEPT|Job:${fullJob.jobHash}|Buyer:${fullJob.buyerVerusId}|Amt:${fullJob.amount} ${fullJob.currency}|Ts:${timestamp}|I accept this job and commit to delivering the work.`;
-
+  const acceptMessage = buildAcceptMessage(fullJob, timestamp);
   const acceptSig = signMessage(keys.wif, acceptMessage, 'verustest');
 
   await agent.client.acceptJob(job.id, acceptSig, timestamp);
   console.log('✅ Job accepted\n');
-  
+
   // Connect to chat
   await agent.connectChat();
   console.log('✅ Connected to SafeChat\n');
-  
+
   // ─────────────────────────────────────────
   // STEP 3: DO THE WORK
   // ─────────────────────────────────────────
   console.log('→ Processing job...\n');
-  
+
   let result;
   try {
     result = await processJob(job, agent);
@@ -168,71 +161,56 @@ async function main() {
     console.error('\n❌ Job failed:', e.message);
     result = { error: e.message, content: 'Job failed: ' + e.message };
   }
-  
+
   // ─────────────────────────────────────────
   // STEP 4: DELIVER RESULT
   // ─────────────────────────────────────────
   console.log('→ Delivering result...');
-  const deliverSig = signMessage(
-    keys.wif,
-    `VAP-DELIVER|Job:${job.id}|Hash:${result.hash || 'failed'}`,
-    'verustest'
-  );
-  
-  await agent.client.deliverJob(job.id, deliverSig, result.content.substring(0, 200), result.content);
+  const deliverTimestamp = Math.floor(Date.now() / 1000);
+  const deliverMessage = buildDeliverMessage(fullJob, result.hash || 'failed', deliverTimestamp);
+  const deliverSig = signMessage(keys.wif, deliverMessage, 'verustest');
+
+  await agent.client.deliverJob(job.id, result.hash || 'failed', deliverSig, deliverTimestamp, result.content.substring(0, 200));
   console.log('✅ Job delivered\n');
-  
+
   // Wait for chat to flush
   await new Promise(r => setTimeout(r, 5000));
-  
+
   // ─────────────────────────────────────────
   // STEP 5: DELETION ATTESTATION
   // ─────────────────────────────────────────
   console.log('→ Signing deletion attestation...');
-  
+
   const deletionTime = new Date().toISOString();
-  
-  const deletionAttestation = {
-    type: 'container:destroyed',
+
+  const deletionPayload = generateAttestationPayload({
     jobId: JOB_ID,
     containerId: CONTAINER_ID,
     agentId: AGENT_ID,
     identity: IDENTITY,
     createdAt: creationTime,
     destroyedAt: deletionTime,
-    jobHash: jobHash,
-    dataVolumes: ['/app/job', '/tmp', '/var/tmp'],
-    deletionMethod: 'container-auto-remove',
+    jobHash,
     ephemeral: true,
-    privacyAttestation: true,
-  };
-  
-  const deletionMessage = JSON.stringify(deletionAttestation);
-  const deletionSig = signChallenge(keys.wif, deletionMessage, keys.iAddress, 'verustest');
-  
-  deletionAttestation.signature = deletionSig;
-  
+    attestedBy: IDENTITY,
+  });
+
+  const deletionAttestation = signAttestation(deletionPayload, keys.wif, 'verustest');
+
   // Save attestation
   fs.writeFileSync(
     path.join(JOB_DIR, 'deletion-attestation.json'),
     JSON.stringify(deletionAttestation, null, 2)
   );
-  
+
   // Submit to platform
   try {
-    await agent.client.submitAttestation({
-      jobId: JOB_ID,
-      containerId: CONTAINER_ID,
-      creationAttestation,
-      deletionAttestation,
-      attestedBy: IDENTITY,
-      attestedAt: deletionTime,
-    });
+    await agent.client.submitAttestation(deletionAttestation);
     console.log('✅ Deletion attestation submitted to platform\n');
   } catch (e) {
     console.log('⚠️  Could not submit attestation (optional feature):', e.message);
   }
-  
+
   console.log('🏁 Job complete with privacy attestation. Container will be destroyed.');
   console.log('');
   console.log('Privacy Summary:');
@@ -242,74 +220,27 @@ async function main() {
   console.log(`  Container: ${CONTAINER_ID.substring(0, 12)}`);
   console.log(`  Job Hash: ${jobHash.substring(0, 16)}...`);
   console.log('');
-  
+
   process.exit(0);
-}
-
-async function authenticateAgent(agent, keys) {
-  const { signMessage } = require('./sdk/dist/identity/signer.js');
-
-  let challengeRes = await agent.client.getAuthChallenge();
-  const ch = challengeRes?.data || challengeRes;
-
-  if (!ch?.challenge || !ch?.challengeId) {
-    // Fallback direct request for compatibility with response-shape drift
-    const direct = await fetch(`${API_URL}/auth/challenge`, { signal: AbortSignal.timeout(30000) });
-    const raw = await direct.json();
-    const d = raw?.data || raw;
-    challengeRes = d;
-  } else {
-    challengeRes = ch;
-  }
-
-  if (!challengeRes?.challenge || !challengeRes?.challengeId) {
-    throw new Error('Failed to get auth challenge (missing challenge/challengeId)');
-  }
-
-  const signature = signMessage(keys.wif, challengeRes.challenge, 'verustest');
-
-  const loginRes = await fetch(`${API_URL}/auth/login`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      challengeId: challengeRes.challengeId,
-      verusId: IDENTITY,
-      signature,
-    }),
-    signal: AbortSignal.timeout(30000),
-  });
-
-  if (!loginRes.ok) {
-    const body = await loginRes.text();
-    throw new Error(`Login failed: ${body}`);
-  }
-
-  const setCookie = loginRes.headers.get('set-cookie') || '';
-  const match = setCookie.match(/verus_session=([^;]+)/);
-  if (!match) {
-    throw new Error('Login succeeded but no verus_session cookie returned');
-  }
-
-  agent.client.setSessionToken(match[1]);
 }
 
 async function processJob(job, agent) {
   // In production: Use MCP tools, call LLM, etc.
   console.log('Working on:', job.description);
-  
+
   // Simulate work
   await new Promise(r => setTimeout(r, 5000));
-  
+
   const content = `Completed: ${job.description}`;
   const hash = crypto.createHash('sha256').update(content).digest('hex');
-  
+
   return { content, hash };
 }
 
 // Timeout protection
 setTimeout(() => {
   console.error('⏰ Job timeout! Signing deletion attestation and exiting.');
-  
+
   // Try to sign deletion attestation even on timeout
   try {
     const keys = JSON.parse(fs.readFileSync(KEYS_FILE, 'utf8'));
@@ -320,11 +251,11 @@ setTimeout(() => {
       destroyedAt: new Date().toISOString(),
       reason: 'timeout',
     };
-    
+
     const { signChallenge } = require('./sdk/dist/identity/signer.js');
     const sig = signChallenge(keys.wif, JSON.stringify(deletionAttestation), keys.iAddress, 'verustest');
     deletionAttestation.signature = sig;
-    
+
     fs.writeFileSync(
       path.join(JOB_DIR, 'deletion-attestation-timeout.json'),
       JSON.stringify(deletionAttestation, null, 2)
@@ -332,7 +263,7 @@ setTimeout(() => {
   } catch (e) {
     console.error('Could not sign timeout attestation:', e.message);
   }
-  
+
   process.exit(1);
 }, TIMEOUT_MS);
 
