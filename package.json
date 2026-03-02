@@ -1,8 +1,8 @@
 {
   "name": "vap-dispatcher",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Multi-agent orchestration for Verus Agent Platform",
-  "main": "src/dispatcher.js",
+  "main": "src/cli-v2.js",
   "scripts": {
     "start": "node src/cli-v2.js start",
     "cli": "node src/cli-v2.js",
@@ -11,11 +11,7 @@
   },
   "dependencies": {
     "commander": "^11.0.0",
-    "dockerode": "^4.0.0",
-    "express": "^4.18.0",
-    "uuid": "^9.0.0",
-    "ws": "^8.14.0",
-    "yaml": "^2.3.0"
+    "dockerode": "^4.0.0"
   },
   "packageManager": "pnpm@10.0.0"
 }

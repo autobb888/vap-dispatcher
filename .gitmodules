@@ -1,0 +1,3 @@
+[submodule "vap-agent-sdk"]
+	path = vap-agent-sdk
+	url = https://github.com/autobb888/vap-agent-sdk.git

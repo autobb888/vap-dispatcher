@@ -2,3 +2,7 @@ node_modules/
 .vap-keys.json
 .env
 /tmp/
+.build-temp/
+vap-agent-sdk/node_modules/
+vap-agent-sdk/dist/
+vap-agent-sdk/.vap-keys.json
