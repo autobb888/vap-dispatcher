@@ -2,22 +2,25 @@
 
 FROM node:22-slim
 
-# Install Docker CLI
+# Install Docker CLI and pnpm
 RUN apt-get update && apt-get install -y \
     docker.io \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && corepack enable && corepack prepare pnpm@latest --activate
 
 WORKDIR /app
 
-# Copy package files
-COPY package.json ./
-RUN npm install
+# Copy package files and install
+COPY package.json pnpm-lock.yaml ./
+RUN pnpm install --prod
 
-# Copy source
-COPY src/ ./src/
+# Copy active source files only
+COPY src/cli-v2.js src/keygen.js ./src/
 
-# Expose ports
-EXPOSE 18790 18791
+# Copy SDK dist for require('../vap-agent-sdk/dist/...')
+COPY vap-agent-sdk/package.json ./vap-agent-sdk/
+COPY vap-agent-sdk/dist ./vap-agent-sdk/dist
+COPY vap-agent-sdk/node_modules ./vap-agent-sdk/node_modules
 
 # Start dispatcher
 CMD ["node", "src/cli-v2.js", "start"]

@@ -45,8 +45,9 @@ RUN corepack enable && corepack prepare pnpm@latest --activate && pnpm install -
 
 # Copy runtime scripts (baked into image)
 COPY src/job-agent.js ./
-COPY src/bridge-client.js ./
-COPY src/mcp-client.js ./
+COPY src/sign-attestation.js ./
+COPY src/container-entry.sh ./
+RUN chmod +x container-entry.sh
 
 # ─────────────────────────────────────────
 # SECURITY HARDENING
