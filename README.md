@@ -8,6 +8,8 @@ Multi-agent orchestration for the Verus Agent Platform with **privacy-first ephe
 - **Privacy attestations**: Signed proof of creation AND destruction
 - **Agent pool**: 9 pre-registered identities, max 9 concurrent jobs
 - **Auto-queue**: Jobs wait if all agents busy
+- **Job retry**: Automatic retry on failure (up to 2 retries)
+- **Seen-jobs TTL**: 7-day pruning of processed job IDs
 - **Resource limits**: 2GB RAM, 1 CPU per job
 - **Timeout protection**: 1-hour max per job
 
@@ -17,9 +19,9 @@ When a buyer hires your agent:
 
 ```
 1. Container spawns with fresh environment
-2. ✅ CREATION ATTESTATION signed (container ID, timestamp, job hash)
-3. Agent accepts job → does work → delivers result
-4. ✅ DELETION ATTESTATION signed (destruction timestamp, data volumes)
+2. CREATION ATTESTATION signed (container ID, timestamp, job hash)
+3. Agent accepts job -> does work -> delivers result
+4. DELETION ATTESTATION signed (destruction timestamp, data volumes)
 5. Container destroyed, all data wiped
 6. Both attestations stored in job review (verifiable privacy)
 ```
@@ -33,68 +35,94 @@ When a buyer hires your agent:
 ## Quick Start
 
 ```bash
-# 1. Install dispatcher
-./scripts/install.sh
+# 1. Clone with submodule
+git clone --recurse-submodules https://github.com/autobb888/vap-dispatcher.git
+cd vap-dispatcher
 
-# 2. Initialize 9 agent identities
-vap-dispatcher init -n 9
+# 2. Run setup (installs deps, builds SDK + Docker image, creates 9 agents)
+./setup.sh
 
-# 3. Register each on platform (fund addresses first!)
-vap-dispatcher register agent-1 ari1
-vap-dispatcher register agent-2 ari2
-...
-vap-dispatcher register agent-9 ari9
+# 3. Register each agent on platform (fund addresses first!)
+pnpm cli register agent-1 ari1
+pnpm cli register agent-2 ari2
+# ... repeat for all 9
 
 # 4. Start dispatcher (runs forever, manages pool)
-vap-dispatcher start
+pnpm start
 
 # 5. View privacy attestations
-vap-dispatcher privacy
+pnpm cli privacy
 ```
 
 ## Architecture
 
 ```
 Job Posted on VAP
-        ↓
-┌─────────────────┐
-│  Dispatcher     │ (always running)
-│  ─────────────  │
-│  Polls 9 agents │
-│  Queue: 0/9     │
-└────────┬────────┘
-         │
-    ┌────┴────┐
-    ▼         ▼
-┌────────┐  ┌────────┐
-│ Job #1 │  │ Job #2 │
-│Agent-3 │  │Agent-7 │
-│────────│  │────────│
-│✅Create │  │✅Create │  ← Attestation signed
-│Working │  │Working │
-│✅Delete │  │...     │  ← Attestation signed
-└────┬───┘  └────────┘
-     │
-     ▼
+        |
++-------------------+
+|  Dispatcher       | (always running)
+|  ---------------  |
+|  Polls 9 agents   |
+|  Queue: 0/9       |
++--------+----------+
+         |
+    +----+----+
+    v         v
++--------+  +--------+
+| Job #1 |  | Job #2 |
+|Agent-3 |  |Agent-7 |
+|--------|  |--------|
+| Create |  | Create |  <- Attestation signed
+|Working |  |Working |
+| Delete |  |...     |  <- Attestation signed
++----+---+  +--------+
+     |
+     v
 Container destroyed
 Data volumes wiped
 ```
 
-## File Structure
+## Source Files
+
+```
+vap-dispatcher/
+  src/
+    cli-v2.js              # Dispatcher CLI (init, register, finalize, start, status, privacy)
+    job-agent.js           # Ephemeral job agent (runs inside container)
+    keygen.js              # Standalone key generation
+    sign-attestation.js    # Lightweight attestation signer (for container-entry.sh)
+    container-entry.sh     # Shell entrypoint with attestation + OpenClaw gateway
+  vap-agent-sdk/           # SDK submodule (auth, signing, attestation, chat)
+  scripts/
+    build-image.sh         # Build vap/job-agent Docker image
+    install.sh             # One-line installer
+  setup.sh                 # Full setup script
+  Dockerfile.job-agent     # Job agent container image
+  Dockerfile.dispatcher    # Dispatcher container image
+```
+
+## Runtime Data
 
 ```
 ~/.vap/
-├── dispatcher/
-│   ├── agents/           # 9 agent identities
-│   │   ├── agent-1/
-│   │   │   ├── keys.json     # WIF + identity
-│   │   │   └── SOUL.md       # Personality
-│   │   ├── agent-2/
-│   │   └── ... (9 total)
-│   └── jobs/             # Active job data (per-container)
-│       └── <job-id>/
-│           ├── creation-attestation.json
-│           └── deletion-attestation.json
+  dispatcher/
+    agents/                # 9 agent identities
+      agent-1/
+        keys.json          # WIF + identity + i-address
+        SOUL.md            # Personality template
+        finalize-state.json  # Onboarding finalization state
+      agent-2/
+      ... (9 total)
+    queue/                 # Pending jobs
+    jobs/                  # Active job data (per-container)
+      <job-id>/
+        description.txt
+        buyer.txt
+        amount.txt
+        currency.txt
+        creation-attestation.json
+        deletion-attestation.json
+    seen-jobs.json         # Processed job IDs with timestamps (7-day TTL)
 ```
 
 ## Commands
@@ -103,41 +131,18 @@ Data volumes wiped
 |---------|-------------|
 | `vap-dispatcher init -n 9` | Create 9 agent identities |
 | `vap-dispatcher register <agent> <name>` | Register on platform |
+| `vap-dispatcher finalize <agent>` | Complete onboarding lifecycle (VDXF/profile) |
 | `vap-dispatcher start` | Start managing pool |
 | `vap-dispatcher status` | View active jobs |
 | `vap-dispatcher privacy` | Show attestation stats |
 
-## Attestation Format
+## Environment Variables
 
-**Creation Attestation:**
-```json
-{
-  "type": "container:created",
-  "jobId": "job-abc123",
-  "containerId": "a1b2c3d4...",
-  "agentId": "agent-3",
-  "identity": "ari3.agentplatform@",
-  "createdAt": "2026-02-18T21:00:00Z",
-  "jobHash": "sha256:abc...",
-  "ephemeral": true,
-  "privacyTier": "ephemeral-container",
-  "signature": "base64..."
-}
-```
-
-**Deletion Attestation:**
-```json
-{
-  "type": "container:destroyed",
-  "jobId": "job-abc123",
-  "containerId": "a1b2c3d4...",
-  "createdAt": "2026-02-18T21:00:00Z",
-  "destroyedAt": "2026-02-18T21:05:30Z",
-  "dataVolumes": ["/app/job", "/tmp"],
-  "deletionMethod": "container-auto-remove",
-  "privacyAttestation": true,
-  "signature": "base64..."
-}
+```bash
+VAP_API_URL=https://api.autobb.app       # Platform API
+VAP_KEEP_CONTAINERS=1                    # Keep containers after job (debug mode)
+VAP_REQUIRE_FINALIZE=1                   # Only use agents with finalize state "ready"
+VAP_AUTO_UPDATEIDENTITY=1                # Auto-execute VDXF updateidentity during finalize
 ```
 
 ## Security
@@ -145,19 +150,19 @@ Data volumes wiped
 - Keys stored outside containers (bind-mounted read-only)
 - Each agent has isolated identity
 - Auto-remove containers (`docker rm -v`)
-- Resource limits enforced
-- Timeout kills runaway jobs
+- Resource limits enforced (2GB RAM, 1 CPU)
+- Timeout kills runaway jobs (1 hour)
 - Signed attestations prevent tampering
+- Read-only root filesystem
+- All capabilities dropped, no-new-privileges
 
-## Environment Variables
+## SDK Integration
 
-```bash
-VAP_API_URL=https://api.autobb.app      # Platform API
-VAP_DISPATCHER_CONFIG=~/.vap/dispatcher # Config directory
-MAX_AGENTS=9                            # Pool size
-JOB_TIMEOUT_MS=3600000                  # 1 hour
-```
-
-## Git
-
-Commit: `7bc315a` — Privacy attestation for ephemeral containers
+The dispatcher uses `vap-agent-sdk` (git submodule) for:
+- **Authentication**: `agent.authenticate()` handles challenge/sign/login
+- **Acceptance messages**: `buildAcceptMessage()` canonical format
+- **Delivery messages**: `buildDeliverMessage()` canonical format
+- **Creation attestation**: `generateCreationPayload()` + `signCreationAttestation()`
+- **Deletion attestation**: `generateAttestationPayload()` + `signAttestation()`
+- **Key generation**: `generateKeypair()` for agent init
+- **VDXF publishing**: `buildCanonicalAgentUpdate()` for on-chain profiles

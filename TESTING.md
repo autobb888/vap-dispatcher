@@ -9,8 +9,30 @@ docker ps
 # 2. Node.js 22+
 node --version
 
-# 3. VRSCTEST funds for registration
+# 3. pnpm installed
+pnpm --version
+
+# 4. VRSCTEST funds for registration
 # You'll need ~1 VRSC per agent for identity registration
+```
+
+---
+
+## Step 0: SDK Setup
+
+```bash
+cd ~/vap-dispatcher
+
+# Initialize submodule (if not cloned with --recurse-submodules)
+git submodule update --init
+
+# Build SDK
+cd vap-agent-sdk
+npm install && npm run build
+cd ..
+
+# Verify
+ls vap-agent-sdk/dist/index.js
 ```
 
 ---
@@ -18,8 +40,6 @@ node --version
 ## Step 1: Build Pre-Baked Image
 
 ```bash
-cd ~/vap-dispatcher
-
 # Build the job agent image (one time)
 ./scripts/build-image.sh
 
@@ -33,7 +53,7 @@ docker images | grep vap/job-agent
 
 ```bash
 # Create 9 agent identities (generates keys)
-vap-dispatcher init -n 9
+pnpm cli init -n 9
 
 # Check what was created
 ls ~/.vap/dispatcher/agents/
@@ -59,9 +79,6 @@ for i in {1..9}; do
   cat ~/.vap/dispatcher/agents/agent-$i/keys.json | grep address
   echo ""
 done
-
-# Send VRSC to each address from your funded wallet
-# Wait for confirmation...
 ```
 
 ---
@@ -70,17 +87,13 @@ done
 
 ```bash
 # Register agent-1 as "test1.agentplatform@"
-vap-dispatcher register agent-1 test1
+pnpm cli register agent-1 test1
 
-# Wait for confirmation (can take 5-15 min on testnet)
-
-# Register more agents
-vap-dispatcher register agent-2 test2
-vap-dispatcher register agent-3 test3
-# ... etc
+# With finalization (profile + VDXF):
+pnpm cli register agent-1 test1 --finalize --profile-name "Test Agent" --profile-description "A test agent"
 
 # Check registration status
-vap-dispatcher status
+pnpm cli status
 ```
 
 ---
@@ -89,18 +102,15 @@ vap-dispatcher status
 
 ```bash
 # Start the dispatcher (runs in foreground)
-vap-dispatcher start
+pnpm start
 
 # You should see:
-# ╔══════════════════════════════════════════╗
-# ║     VAP Dispatcher                       ║
-# ║     Ephemeral Job Containers             ║
-# ║     with Privacy Attestation             ║
-# ╚══════════════════════════════════════════╝
-# 
+# VAP Dispatcher
+# Ephemeral Job Containers
+# with Privacy Attestation
+#
 # Ready agents: 9
 # Max concurrent: 9
-# Privacy: Creation + Deletion attestations
 ```
 
 ---
@@ -112,20 +122,17 @@ vap-dispatcher start
 1. Go to https://app.autobb.app
 2. Create a service as one of your agents
 3. Post a job from another account
-4. Watch dispatcher console — it should:
-   - Detect the job
-   - Spawn container
-   - Sign creation attestation
-   - Accept job
-   - Do work
-   - Sign deletion attestation
-   - Destroy container
+4. Watch dispatcher console
 
-### Option B: Test with curl
+### Debug Mode
 
 ```bash
-# Post a test job to the platform
-# (Requires auth — use dashboard instead for simplicity)
+# Keep containers alive after job completion for inspection:
+VAP_KEEP_CONTAINERS=1 pnpm start
+
+# Then inspect:
+docker ps -a | grep vap-job
+docker logs vap-job-<job-id>
 ```
 
 ---
@@ -134,34 +141,17 @@ vap-dispatcher start
 
 ```bash
 # In another terminal while dispatcher runs:
-vap-dispatcher privacy
+pnpm cli privacy
 
 # Should show:
 # Jobs with privacy attestations: X
-# 
+#
 # Recent attestations:
 #   abc123...
 #     Created: 2026-02-18T21:00:00Z
 #     Deleted: 2026-02-18T21:05:30Z
 #     Duration: 330s
-#     Verified: ✅ Signed
-```
-
----
-
-## Step 8: Check Container Lifecycle
-
-```bash
-# In another terminal:
-
-# Watch containers spawn/destroy
-watch -n 2 docker ps
-
-# View logs of active job
-docker logs -f vap-job-<job-id>
-
-# Check attestations on disk
-ls ~/.vap/dispatcher/jobs/
+#     Verified: Signed
 ```
 
 ---
@@ -171,29 +161,27 @@ ls ~/.vap/dispatcher/jobs/
 When a job comes in, you should see:
 
 ```
-📥 New job: job-abc123 (10 VRSC)
-   → Starting container with agent-3
-✅ Container started for job job-abc123
+New job: job-abc123 (10 VRSC)
+   -> Starting container with agent-3
+Container started for job job-abc123
 
 [In container logs]
-╔══════════════════════════════════════════╗
-║     Ephemeral Job Agent (Privacy)       ║
-╚══════════════════════════════════════════╝
-→ Signing creation attestation...
-✅ Creation attestation signed
-→ Accepting job...
-✅ Job accepted
-✅ Connected to SafeChat
-→ Processing job...
-✅ Work completed
-→ Delivering result...
-✅ Job delivered
-→ Signing deletion attestation...
-✅ Deletion attestation submitted
-🏁 Job complete. Container will be destroyed.
+Ephemeral Job Agent (Privacy)
+-> Signing creation attestation...
+Creation attestation signed
+-> Accepting job...
+Job accepted
+Connected to SafeChat
+-> Processing job...
+Work completed
+-> Delivering result...
+Job delivered
+-> Signing deletion attestation...
+Deletion attestation submitted
+Job complete. Container will be destroyed.
 
 [Back in dispatcher]
-✅ Job job-abc123 complete, agent returned to pool
+Job job-abc123 complete, agent returned to pool
 ```
 
 ---
@@ -201,38 +189,22 @@ When a job comes in, you should see:
 ## Testing Scenarios
 
 ### 1. Basic Job Flow
-```bash
-# Post job via dashboard
-# Verify: container spawns → work → destroys
-```
+Post job via dashboard -> container spawns -> work -> destroys
 
 ### 2. Concurrent Jobs (Max 9)
-```bash
-# Post 10 jobs quickly
-# Verify: 9 containers run, 1 queues
-# When 1 finishes, queued job starts
-```
+Post 10 jobs quickly -> 9 containers run, 1 queues -> when 1 finishes, queued job starts
 
-### 3. Timeout Handling
-```bash
-# Post job that takes >1 hour
-# Verify: container killed at timeout, attestation signed
-```
+### 3. Job Retry
+Container exits non-zero -> auto-retry up to 2 times -> final failure after 3 attempts
 
-### 4. Privacy Attestation
-```bash
-# Check attestations exist and are signed
-vap-dispatcher privacy
+### 4. Timeout Handling
+Post job that takes >1 hour -> container killed at timeout, timeout attestation signed
 
-# Verify signatures (optional)
-# (Use SDK verify function)
-```
+### 5. Privacy Attestation
+Check `pnpm cli privacy` -> attestations exist and are signed
 
-### 5. Resource Limits
-```bash
-# Post job that uses lots of memory
-# Verify: container killed at 2GB limit
-```
+### 6. Seen-Jobs TTL
+After 7 days, processed job IDs are pruned from seen-jobs.json
 
 ---
 
@@ -242,26 +214,16 @@ vap-dispatcher privacy
 ```bash
 # Check agent identities are registered
 cat ~/.vap/dispatcher/agents/agent-1/keys.json | grep identity
-# Should show: "identity": "test1.agentplatform@"
 
 # Check dispatcher logs
-vap-dispatcher status
+pnpm cli status
 ```
 
 ### Container fails to spawn?
 ```bash
-# Check Docker
 docker ps
 docker logs vap-job-<id>
-
-# Check image exists
 docker images | grep vap/job-agent
-```
-
-### Attestations not signing?
-```bash
-# Check keys are readable in container
-docker exec vap-job-<id> cat /app/keys.json
 ```
 
 ---
@@ -270,9 +232,6 @@ docker exec vap-job-<id> cat /app/keys.json
 
 ```bash
 # Ctrl+C in dispatcher terminal
-# Or:
-killall -TERM vap-dispatcher
-
 # Clean up any stuck containers
 docker ps | grep vap-job | awk '{print $1}' | xargs docker stop
 docker ps -a | grep vap-job | awk '{print $1}' | xargs docker rm
@@ -280,33 +239,17 @@ docker ps -a | grep vap-job | awk '{print $1}' | xargs docker rm
 
 ---
 
-## Production Deployment (vap-av1)
+## Production Deployment
 
 ```bash
-# On vap-av1:
-
-# 1. Clone repos
-git clone <vap-dispatcher-repo>
-git clone <vap-agent-sdk-repo>
-
-# 2. Build image
+# On your server:
+git clone --recurse-submodules <vap-dispatcher-repo>
 cd vap-dispatcher
-./scripts/build-image.sh
+./setup.sh
 
-# 3. Initialize agents
-vap-dispatcher init -n 9
-
-# 4. Fund and register (manual or scripted)
-# ...
-
-# 5. Run with systemd or tmux
+# Run with tmux
 tmux new -s dispatcher
-vap-dispatcher start
-
+pnpm start
 # Detach: Ctrl+B, D
 # Reattach: tmux attach -t dispatcher
 ```
-
----
-
-Ready to test? Start with **Step 1** (build image)!
