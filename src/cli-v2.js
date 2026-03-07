@@ -457,7 +457,7 @@ program
     console.log(`Max concurrent: ${MAX_AGENTS}`);
     console.log(`Job timeout: ${JOB_TIMEOUT_MS / 60000} min`);
     console.log(`Keep containers: ${process.env.VAP_KEEP_CONTAINERS === '1' ? 'ON (debug)' : 'OFF'}`);
-    console.log('Privacy: Creation + Deletion attestations\n');
+    console.log('Privacy: Deletion attestations\n');
     
     // Check which agents are registered on platform (+ optional finalize readiness)
     const enforceFinalize = process.env.VAP_REQUIRE_FINALIZE === '1';
@@ -494,6 +494,7 @@ program
       queue: [], // pending jobs
       seen: loadSeenJobs(), // completed/claimed jobs with timestamps (Map<jobId, timestamp>)
       retries: new Map(), // jobId -> retry count
+      agentSessions: new Map(), // agentId -> { agent: VAPAgent, authedAt: number }
     };
     
     // Poll for jobs
@@ -612,25 +613,37 @@ program
     console.log('');
   });
 
-// Poll for new jobs
-async function pollForJobs(state) {
-  // Get jobs from all available agents
+// Get or create a cached authenticated VAPAgent session.
+// Sessions are reused for 10 minutes before re-authenticating.
+const SESSION_TTL_MS = 10 * 60 * 1000; // 10 min
+
+async function getAgentSession(state, agentInfo) {
   const { VAPAgent } = require('../vap-agent-sdk/dist/index.js');
   const baseUrl = process.env.VAP_API_URL || 'https://api.autobb.app';
 
+  const cached = state.agentSessions.get(agentInfo.id);
+  if (cached && (Date.now() - cached.authedAt) < SESSION_TTL_MS) {
+    return cached.agent;
+  }
+
+  const agent = new VAPAgent({
+    vapUrl: baseUrl,
+    wif: agentInfo.wif,
+    identityName: agentInfo.identity,
+    iAddress: agentInfo.iAddress,
+  });
+  await agent.authenticate();
+  state.agentSessions.set(agentInfo.id, { agent, authedAt: Date.now() });
+  return agent;
+}
+
+// Poll for new jobs
+async function pollForJobs(state) {
   for (const agentInfo of [...state.available]) {
     try {
       console.log(`[Poll] Checking ${agentInfo.id} (${agentInfo.identity || agentInfo.address})`);
 
-      const agent = new VAPAgent({
-        vapUrl: baseUrl,
-        wif: agentInfo.wif,
-        identityName: agentInfo.identity,
-        iAddress: agentInfo.iAddress,
-      });
-
-      // Login via SDK (handles challenge, signing, session cookie)
-      await agent.authenticate();
+      const agent = await getAgentSession(state, agentInfo);
 
       // Fetch pending jobs via SDK client
       const result = await agent.client.getMyJobs({ status: 'requested', role: 'seller' });
@@ -668,6 +681,8 @@ async function pollForJobs(state) {
         }
       }
     } catch (e) {
+      // Invalidate session on auth/request errors so next poll re-authenticates
+      state.agentSessions.delete(agentInfo.id);
       console.error(`[Poll] Error for ${agentInfo.id}:`, e.message);
     }
   }
@@ -683,22 +698,12 @@ async function pollForJobs(state) {
 
 // Check for pending reviews and process them (runs from dispatcher, not container)
 async function checkPendingReviews(state) {
-  const { VAPAgent } = require('../vap-agent-sdk/dist/index.js');
-  const baseUrl = process.env.VAP_API_URL || 'https://api.autobb.app';
-
   // Check all registered agents (not just available ones — reviews arrive after job is done)
   for (const agentInfo of state.agents) {
     if (!agentInfo.identity || !agentInfo.wif || !agentInfo.iAddress) continue;
 
     try {
-      const agent = new VAPAgent({
-        vapUrl: baseUrl,
-        wif: agentInfo.wif,
-        identityName: agentInfo.identity,
-        iAddress: agentInfo.iAddress,
-      });
-
-      await agent.authenticate();
+      const agent = await getAgentSession(state, agentInfo);
 
       // Check inbox for pending review/completion items only
       const inbox = await agent.client.getInbox('pending', 20);
@@ -719,7 +724,8 @@ async function checkPendingReviews(state) {
         }
       }
     } catch (e) {
-      // Non-fatal: skip this agent if auth fails
+      // Invalidate session on error so next cycle re-authenticates
+      state.agentSessions.delete(agentInfo.id);
       if (!e.message.includes('not registered')) {
         console.error(`[Reviews] Error checking ${agentInfo.id}:`, e.message);
       }
