@@ -125,11 +125,14 @@ function createFinalizeHooks(agentId, identityName, profile, services = []) {
   return {
     publishVdxf: async () => {
       const {
+        VAPAgent,
         VDXF_KEYS,
+        buildAgentContentMultimap,
         buildCanonicalAgentUpdate,
         buildUpdateIdentityCommand,
         getCanonicalVdxfDefinitionCount,
       } = require('../vap-agent-sdk/dist/index.js');
+      const { buildIdentityUpdateTx } = require('../vap-agent-sdk/dist/identity/update.js');
 
       const fields = profile
         ? {
@@ -159,37 +162,64 @@ function createFinalizeHooks(agentId, identityName, profile, services = []) {
         fields,
       });
 
-      const commandArgs = buildUpdateIdentityCommand(payload, 'verustest');
-      const commandStr = commandArgs.map(a => a.includes(' ') || a.includes('{') ? `'${a}'` : a).join(' ');
-
+      // Save plan for reference
       fs.writeFileSync(planPath, JSON.stringify({
         generatedAt: new Date().toISOString(),
         identity: identityName,
         canonicalDefinitionCount: getCanonicalVdxfDefinitionCount(),
         payload,
       }, null, 2));
+
+      // Also save the verus CLI command for manual fallback
+      const commandArgs = buildUpdateIdentityCommand(payload, 'verustest');
+      const commandStr = commandArgs.map(a => a.includes(' ') || a.includes('{') ? `'${a}'` : a).join(' ');
       fs.writeFileSync(cmdPath, `${commandStr}\n`);
       fs.chmodSync(cmdPath, 0o700);
 
-      if (process.env.VAP_AUTO_UPDATEIDENTITY === '1') {
-        console.log(`   ↳ Executing updateidentity for ${identityName}`);
-        const out = spawn(commandArgs[0], commandArgs.slice(1), { stdio: ['ignore', 'pipe', 'pipe'] });
-        await new Promise((resolve, reject) => {
-          let stderr = '';
-          out.stderr.on('data', d => stderr += d.toString());
-          out.on('close', code => code === 0 ? resolve() : reject(new Error(stderr || `updateidentity failed (${code})`)));
-        });
-      } else {
-        console.log(`   ↳ VDXF update command written: ${cmdPath}`);
-        console.log('   ↳ Set VAP_AUTO_UPDATEIDENTITY=1 to auto-execute during finalize');
+      // Offline signing: authenticate, get identity data + UTXOs, build tx, broadcast
+      console.log(`   ↳ Building offline identity update for ${identityName}...`);
+
+      const agent = new VAPAgent({
+        vapUrl: process.env.VAP_API_URL || 'https://api.autobb.app',
+        wif: keys.wif,
+        identityName: identityName,
+        iAddress: keys.iAddress,
+      });
+      await agent.authenticate();
+
+      // Build VDXF contentmultimap from profile
+      const vdxfAdditions = buildAgentContentMultimap(profile, services);
+
+      // Get current identity data and UTXOs from platform
+      const identityRawResp = await agent.client.getIdentityRaw();
+      const identityData = identityRawResp.data || identityRawResp;
+      const utxoResp = await agent.client.getUtxos();
+      const utxos = utxoResp.utxos || utxoResp;
+      console.log(`   ↳ Identity data retrieved, ${utxos.length} UTXO(s) available`);
+
+      if (!utxos.length) {
+        console.log('   ⚠️  No UTXOs available — identity needs funds for tx fee');
+        console.log(`   ↳ Send at least 0.0001 VRSCTEST to ${keys.address}`);
+        console.log(`   ↳ VDXF plan saved to: ${planPath}`);
+        return;
       }
+
+      // Build and sign the transaction offline
+      const rawhex = buildIdentityUpdateTx({
+        wif: keys.wif,
+        identityData,
+        utxos,
+        vdxfAdditions,
+        network: 'verustest',
+      });
+      console.log(`   ↳ Transaction signed (${rawhex.length / 2} bytes)`);
+
+      // Broadcast via platform API
+      const txResult = await agent.client.broadcast(rawhex);
+      console.log(`   ✅ Identity updated on-chain: ${txResult.txid || txResult}`);
     },
     verifyVdxf: async () => {
-      if (process.env.VAP_AUTO_UPDATEIDENTITY === '1') {
-        console.log('   ↳ Auto-update enabled; basic verification deferred to index stage');
-      } else {
-        console.log('   ↳ Verification deferred (manual updateidentity mode)');
-      }
+      console.log('   ↳ Verification deferred to index stage');
     },
     waitForIndexed: async () => {
       console.log('   ↳ Index visibility check deferred (implement API/RPC verification hook next)');
