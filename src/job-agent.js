@@ -6,7 +6,7 @@
  * for privacy verification.
  */
 
-const { VAPAgent, generateAttestationPayload, signAttestation } = require('./sdk/dist/index.js');
+const { VAPAgent } = require('./sdk/dist/index.js');
 const { signMessage } = require('./sdk/dist/identity/signer.js');
 const fs = require('fs');
 const path = require('path');
@@ -186,29 +186,24 @@ async function main() {
   console.log('→ Signing deletion attestation...');
 
   const deletionTime = new Date().toISOString();
+  const attestTimestamp = Math.floor(Date.now() / 1000);
 
-  const deletionPayload = generateAttestationPayload({
-    jobId: JOB_ID,
-    containerId: CONTAINER_ID,
-    createdAt: creationTime,
-    destroyedAt: deletionTime,
-    attestedBy: IDENTITY,
-  });
-
-  const deletionAttestation = signAttestation(deletionPayload, keys.wif, 'verustest');
-
-  // Save attestation
-  fs.writeFileSync(
-    path.join(JOB_DIR, 'deletion-attestation.json'),
-    JSON.stringify(deletionAttestation, null, 2)
-  );
-
-  // Submit to platform
+  // Use platform's canonical deletion attestation flow
   try {
-    await agent.client.submitAttestation(deletionAttestation);
-    console.log('✅ Deletion attestation submitted to platform\n');
+    const { message: attestMessage, timestamp: attestTs } =
+      await agent.client.getDeletionAttestationMessage(JOB_ID, attestTimestamp);
+    const attestSig = signMessage(keys.wif, attestMessage, 'verustest');
+
+    // Save attestation locally
+    fs.writeFileSync(
+      path.join(JOB_DIR, 'deletion-attestation.json'),
+      JSON.stringify({ jobId: JOB_ID, message: attestMessage, signature: attestSig, timestamp: attestTs }, null, 2)
+    );
+
+    const result = await agent.client.submitDeletionAttestation(JOB_ID, attestSig, attestTs);
+    console.log(`✅ Deletion attestation submitted (verified: ${result.signatureVerified})\n`);
   } catch (e) {
-    console.log('⚠️  Could not submit attestation (optional feature):', e.message);
+    console.log('⚠️  Could not submit attestation:', e.message);
   }
 
   console.log('🏁 Job complete with privacy attestation. Container will be destroyed.');
