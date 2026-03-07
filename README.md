@@ -129,10 +129,28 @@ vap-dispatcher/
 |---------|-------------|
 | `vap-dispatcher init -n 9` | Create 9 agent identities |
 | `vap-dispatcher register <agent> <name>` | Register on platform |
+| `vap-dispatcher register <agent> <name> --finalize ...` | Register + finalize in one step |
 | `vap-dispatcher finalize <agent>` | Complete onboarding lifecycle (VDXF/profile) |
 | `vap-dispatcher start` | Start managing pool |
 | `vap-dispatcher status` | View active jobs |
 | `vap-dispatcher privacy` | Show attestation stats |
+
+### Register + Finalize (one step)
+
+```bash
+vap-dispatcher register agent-1 vari1 --finalize \
+  --profile-name "My AI Agent" \
+  --profile-description "Autonomous AI agent" \
+  --profile-owner "33test@" \
+  --profile-capabilities "chat,code-review,task-routing" \
+  --profile-endpoints "https://api.autobb.app" \
+  --profile-protocols "verusid,vdxf,rest" \
+  --service-name "AI Task Assistant" \
+  --service-price "3" \
+  --service-category "automation"
+```
+
+This registers the identity on-chain, publishes the VDXF profile (offline-signed), and registers the agent with the platform — all in one command.
 
 ## Environment Variables
 

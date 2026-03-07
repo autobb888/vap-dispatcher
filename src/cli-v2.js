@@ -313,27 +313,37 @@ program
   .option('--profile-name <name>', 'Profile display name for headless finalize')
   .option('--profile-type <type>', 'Profile type (autonomous|assisted|hybrid|tool)', 'autonomous')
   .option('--profile-description <desc>', 'Profile description for headless finalize')
+  .option('--profile-owner <owner>', 'Owner VerusID (e.g., 33test@)')
+  .option('--profile-capabilities <caps>', 'Comma-separated capabilities', (v) => v.split(','))
+  .option('--profile-endpoints <eps>', 'Comma-separated endpoints', (v) => v.split(','))
+  .option('--profile-protocols <protos>', 'Comma-separated protocols', (v) => v.split(','))
+  .option('--service-name <name>', 'Service name for marketplace listing')
+  .option('--service-description <desc>', 'Service description')
+  .option('--service-price <price>', 'Service price')
+  .option('--service-currency <currency>', 'Service currency', 'VRSC')
+  .option('--service-category <cat>', 'Service category')
+  .option('--service-turnaround <time>', 'Service turnaround time', '1h')
   .action(async (agentId, identityName, options) => {
     ensureDirs();
-    
+
     const keys = loadAgentKeys(agentId);
     if (!keys) {
       console.error(`❌ Agent ${agentId} not found. Run: vap-dispatcher init`);
       process.exit(1);
     }
-    
+
     console.log(`\n→ Registering ${agentId} as ${identityName}.agentplatform@...`);
     console.log(`   Address: ${keys.address}`);
-    
+
     const { VAPAgent } = require('../vap-agent-sdk/dist/index.js');
-    const agent = new VAPAgent({ 
+    const agent = new VAPAgent({
       vapUrl: process.env.VAP_API_URL || 'https://api.autobb.app',
-      wif: keys.wif 
+      wif: keys.wif
     });
-    
+
     try {
       const result = await agent.register(identityName, 'verustest');
-      
+
       // Save identity to keys file
       keys.identity = result.identity;
       keys.iAddress = result.iAddress;
@@ -341,7 +351,7 @@ program
         path.join(AGENTS_DIR, agentId, 'keys.json'),
         JSON.stringify(keys, null, 2)
       );
-      
+
       console.log(`\n✅ ${agentId} registered!`);
       console.log(`   Identity: ${result.identity}`);
       console.log(`   i-Address: ${result.iAddress}`);
@@ -358,15 +368,30 @@ program
                 name: options.profileName,
                 type: options.profileType,
                 description: options.profileDescription,
+                owner: options.profileOwner,
+                capabilities: options.profileCapabilities,
+                endpoints: options.profileEndpoints,
+                protocols: options.profileProtocols,
               }
             : undefined);
+
+        const services = (options.serviceName && options.servicePrice)
+          ? [{
+              name: options.serviceName,
+              description: options.serviceDescription || options.profileDescription,
+              price: options.servicePrice,
+              currency: options.serviceCurrency,
+              category: options.serviceCategory || 'general',
+              turnaround: options.serviceTurnaround,
+            }]
+          : [];
 
         const finalizeResult = await finalizeOnboarding({
           agent,
           statePath: finalizeStatePath,
           mode: options.interactive ? 'interactive' : 'headless',
           profile,
-          hooks: createFinalizeHooks(agentId, keys.identity, profile),
+          hooks: createFinalizeHooks(agentId, keys.identity, profile, services),
         });
 
         console.log(`✅ Finalize stage: ${finalizeResult.stage}`);
@@ -386,6 +411,16 @@ program
   .option('--profile-name <name>', 'Profile display name for headless finalize')
   .option('--profile-type <type>', 'Profile type (autonomous|assisted|hybrid|tool)', 'autonomous')
   .option('--profile-description <desc>', 'Profile description for headless finalize')
+  .option('--profile-owner <owner>', 'Owner VerusID (e.g., 33test@)')
+  .option('--profile-capabilities <caps>', 'Comma-separated capabilities', (v) => v.split(','))
+  .option('--profile-endpoints <eps>', 'Comma-separated endpoints', (v) => v.split(','))
+  .option('--profile-protocols <protos>', 'Comma-separated protocols', (v) => v.split(','))
+  .option('--service-name <name>', 'Service name for marketplace listing')
+  .option('--service-description <desc>', 'Service description')
+  .option('--service-price <price>', 'Service price')
+  .option('--service-currency <currency>', 'Service currency', 'VRSC')
+  .option('--service-category <cat>', 'Service category')
+  .option('--service-turnaround <time>', 'Service turnaround time', '1h')
   .action(async (agentId, options) => {
     ensureDirs();
 
@@ -417,15 +452,30 @@ program
             name: options.profileName,
             type: options.profileType,
             description: options.profileDescription,
+            owner: options.profileOwner,
+            capabilities: options.profileCapabilities,
+            endpoints: options.profileEndpoints,
+            protocols: options.profileProtocols,
           }
         : undefined);
+
+    const services = (options.serviceName && options.servicePrice)
+      ? [{
+          name: options.serviceName,
+          description: options.serviceDescription || options.profileDescription,
+          price: options.servicePrice,
+          currency: options.serviceCurrency,
+          category: options.serviceCategory || 'general',
+          turnaround: options.serviceTurnaround,
+        }]
+      : [];
 
     const finalizeResult = await finalizeOnboarding({
       agent,
       statePath: finalizeStatePath,
       mode: options.interactive ? 'interactive' : 'headless',
       profile,
-      hooks: createFinalizeHooks(agentId, keys.identity, profile),
+      hooks: createFinalizeHooks(agentId, keys.identity, profile, services),
     });
 
     console.log(`✅ Finalize stage: ${finalizeResult.stage}`);

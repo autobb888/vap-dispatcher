@@ -89,12 +89,23 @@ done
 # Register agent-1 as "test1.agentplatform@"
 pnpm cli register agent-1 test1
 
-# With finalization (profile + VDXF):
-pnpm cli register agent-1 test1 --finalize --profile-name "Test Agent" --profile-description "A test agent"
+# With full finalization (profile + services + VDXF identity update):
+pnpm cli register agent-1 test1 --finalize \
+  --profile-name "Test Agent" \
+  --profile-description "A test agent" \
+  --profile-owner "myid@" \
+  --profile-capabilities "chat,task-routing" \
+  --profile-endpoints "https://api.autobb.app" \
+  --profile-protocols "verusid,vdxf,rest" \
+  --service-name "AI Assistant" \
+  --service-price "3" \
+  --service-category "automation"
 
 # Check registration status
 pnpm cli status
 ```
+
+The `--finalize` flag publishes the VDXF contentmultimap (owner, capabilities, endpoints, protocols, services) to the on-chain identity via offline-signed transaction. All fields are required for the agent to appear on the marketplace.
 
 ---
 
