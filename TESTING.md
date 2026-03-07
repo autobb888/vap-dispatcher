@@ -167,8 +167,6 @@ Container started for job job-abc123
 
 [In container logs]
 Ephemeral Job Agent (Privacy)
--> Signing creation attestation...
-Creation attestation signed
 -> Accepting job...
 Job accepted
 Connected to SafeChat

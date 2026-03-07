@@ -159,7 +159,8 @@ function createFinalizeHooks(agentId, identityName, profile, services = []) {
         fields,
       });
 
-      const command = buildUpdateIdentityCommand(payload, 'verustest');
+      const commandArgs = buildUpdateIdentityCommand(payload, 'verustest');
+      const commandStr = commandArgs.map(a => a.includes(' ') || a.includes('{') ? `'${a}'` : a).join(' ');
 
       fs.writeFileSync(planPath, JSON.stringify({
         generatedAt: new Date().toISOString(),
@@ -167,12 +168,12 @@ function createFinalizeHooks(agentId, identityName, profile, services = []) {
         canonicalDefinitionCount: getCanonicalVdxfDefinitionCount(),
         payload,
       }, null, 2));
-      fs.writeFileSync(cmdPath, `${command}\n`);
+      fs.writeFileSync(cmdPath, `${commandStr}\n`);
       fs.chmodSync(cmdPath, 0o700);
 
       if (process.env.VAP_AUTO_UPDATEIDENTITY === '1') {
         console.log(`   ↳ Executing updateidentity for ${identityName}`);
-        const out = spawn('bash', ['-lc', command], { stdio: ['ignore', 'pipe', 'pipe'] });
+        const out = spawn(commandArgs[0], commandArgs.slice(1), { stdio: ['ignore', 'pipe', 'pipe'] });
         await new Promise((resolve, reject) => {
           let stderr = '';
           out.stderr.on('data', d => stderr += d.toString());
@@ -457,6 +458,7 @@ program
     console.log('→ Starting job listener...\n');
     
     const state = {
+      agents: [...readyAgents], // all registered agents (never modified)
       active: new Map(), // jobId -> { agentId, container, startedAt, retries }
       available: [...readyAgents], // pool of idle agents
       queue: [], // pending jobs
@@ -474,12 +476,17 @@ program
       await cleanupCompletedJobs(state);
     }, 10000); // Every 10s
     
+    // Check for pending reviews every 60s
+    setInterval(async () => {
+      await checkPendingReviews(state);
+    }, 60000);
+
     // Status report every minute + prune old seen-jobs
     setInterval(() => {
       console.log(`[${new Date().toISOString()}] Active: ${state.active.size}/${MAX_AGENTS}, Queue: ${state.queue.length}, Available: ${state.available.length}, Seen: ${state.seen.size}`);
       pruneSeenJobs(state.seen);
     }, 60000);
-    
+
     // Initial poll
     await pollForJobs(state);
     
@@ -644,6 +651,52 @@ async function pollForJobs(state) {
   }
 }
 
+// Check for pending reviews and process them (runs from dispatcher, not container)
+async function checkPendingReviews(state) {
+  const { VAPAgent } = require('../vap-agent-sdk/dist/index.js');
+  const baseUrl = process.env.VAP_API_URL || 'https://api.autobb.app';
+
+  // Check all registered agents (not just available ones — reviews arrive after job is done)
+  for (const agentInfo of state.agents) {
+    if (!agentInfo.identity || !agentInfo.wif || !agentInfo.iAddress) continue;
+
+    try {
+      const agent = new VAPAgent({
+        vapUrl: baseUrl,
+        wif: agentInfo.wif,
+        identityName: agentInfo.identity,
+        iAddress: agentInfo.iAddress,
+      });
+
+      await agent.authenticate();
+
+      // Check inbox for pending review/completion items only
+      const inbox = await agent.client.getInbox('pending', 20);
+      const pending = (inbox?.data || []).filter(
+        item => item.type === 'job_completed' || item.type === 'review'
+      );
+      if (pending.length === 0) continue;
+
+      console.log(`[Reviews] ${agentInfo.id}: ${pending.length} pending review(s)`);
+
+      for (const item of pending) {
+        try {
+          console.log(`[Reviews] Processing ${item.type} ${item.id}`);
+          await agent.acceptReview(item.id);
+          console.log(`[Reviews] ✅ Review accepted and identity updated for ${agentInfo.id}`);
+        } catch (e) {
+          console.error(`[Reviews] ❌ Failed to process ${item.id}:`, e.message);
+        }
+      }
+    } catch (e) {
+      // Non-fatal: skip this agent if auth fails
+      if (!e.message.includes('not registered')) {
+        console.error(`[Reviews] Error checking ${agentInfo.id}:`, e.message);
+      }
+    }
+  }
+}
+
 // Start a job container
 async function startJobContainer(state, job, agentInfo) {
   const jobDir = path.join(JOBS_DIR, job.id);
@@ -684,6 +737,11 @@ async function startJobContainer(state, job, agentInfo) {
         `VAP_IDENTITY=${agentInfo.identity}`,
         `VAP_JOB_ID=${job.id}`,
         `JOB_TIMEOUT_MS=${JOB_TIMEOUT_MS}`,
+        // LLM config (pass through from dispatcher env)
+        ...(process.env.KIMI_API_KEY    ? [`KIMI_API_KEY=${process.env.KIMI_API_KEY}`]       : []),
+        ...(process.env.KIMI_BASE_URL   ? [`KIMI_BASE_URL=${process.env.KIMI_BASE_URL}`]     : []),
+        ...(process.env.KIMI_MODEL      ? [`KIMI_MODEL=${process.env.KIMI_MODEL}`]            : []),
+        ...(process.env.IDLE_TIMEOUT_MS ? [`IDLE_TIMEOUT_MS=${process.env.IDLE_TIMEOUT_MS}`]  : []),
       ],
       HostConfig: {
         Binds: [
@@ -727,7 +785,31 @@ async function startJobContainer(state, job, agentInfo) {
     state.available = state.available.filter(a => a.id !== agentInfo.id);
     
     console.log(`✅ Container started for job ${job.id}`);
-    
+
+    // Stream container logs to dispatcher stdout for debugging
+    try {
+      const logStream = await container.logs({
+        follow: true,
+        stdout: true,
+        stderr: true,
+        timestamps: false,
+      });
+      const shortId = job.id.substring(0, 8);
+      logStream.on('data', (chunk) => {
+        // Docker multiplexed stream: first 8 bytes are header, rest is payload
+        const lines = chunk.toString('utf8').replace(/[\x00-\x08]/g, '').trim();
+        if (lines) {
+          for (const line of lines.split('\n')) {
+            const clean = line.trim();
+            if (clean) console.log(`  [${shortId}] ${clean}`);
+          }
+        }
+      });
+      logStream.on('error', () => {}); // ignore stream errors when container exits
+    } catch (e) {
+      // Non-fatal: log streaming is for debugging only
+    }
+
     // Set timeout
     setTimeout(async () => {
       const active = state.active.get(job.id);

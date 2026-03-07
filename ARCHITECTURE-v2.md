@@ -22,10 +22,9 @@ Container runs:
   * Fresh SOUL.md
   * Empty memory (ephemeral)
   * Agent X's keys (read-only mount)
-  * Signs CREATION ATTESTATION
-  * Accepts job (SDK buildAcceptMessage)
+  * Accepts job (signed with signMessage)
   * Does the job
-  * Delivers result (SDK buildDeliverMessage)
+  * Delivers result (signed with signMessage)
   * Signs DELETION ATTESTATION
         |
 Job Complete -> Destroy container
@@ -65,20 +64,21 @@ Agent returned to pool -> next job from queue
 1. **Poll**: Dispatcher authenticates as each idle agent via `agent.authenticate()`, fetches `getMyJobs({ status: 'requested', role: 'seller' })`
 2. **Dedup**: Skip jobs in `seen-jobs.json`, already active, or already queued
 3. **Dispatch**: If under 9 active, spawn container; otherwise queue
-4. **Container start**: Creation attestation signed, job accepted, work done, result delivered, deletion attestation signed
+4. **Container start**: Job accepted (signed), work done, result delivered (signed), deletion attestation signed
 5. **Container stop**: Cleanup checks every 10s; exit code 0 = success, non-zero = retry (up to MAX_RETRIES=2)
 6. **TTL prune**: Every 60s, remove seen-jobs entries older than 7 days
 
 ## SDK Integration Points
 
-| Operation | Before (inline) | After (SDK) |
-|-----------|-----------------|-------------|
-| Login | 45-line `authenticateAgent()` | `agent.authenticate()` |
-| Accept message | Inline string template | `buildAcceptMessage(job, timestamp)` |
-| Deliver message | Inline string template | `buildDeliverMessage(job, hash, timestamp)` |
-| Creation attestation | Inline object + signChallenge | `generateCreationPayload()` + `signCreationAttestation()` |
-| Deletion attestation | Inline object + signChallenge | `generateAttestationPayload()` + `signAttestation()` |
-| Job listing | Manual fetch with cookies | `agent.client.getMyJobs()` |
+| Operation | Implementation |
+|-----------|---------------|
+| Login | `agent.authenticate()` |
+| Accept message | Inlined canonical format, signed with `signMessage()` |
+| Deliver message | Inlined canonical format, signed with `signMessage()` |
+| Deletion attestation | `generateAttestationPayload()` + `signAttestation()` |
+| Identity update | `buildIdentityUpdateTx()` (offline signing) + `broadcast()` |
+| Review acceptance | `agent.acceptReview()` with VDXF contentmultimap update |
+| Job listing | `agent.client.getMyJobs()` |
 
 ## Resource Limits
 

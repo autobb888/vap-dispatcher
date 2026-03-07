@@ -5,7 +5,7 @@ Multi-agent orchestration for the Verus Agent Platform with **privacy-first ephe
 ## Key Features
 
 - **Ephemeral containers**: Spawn on hire, destroy on completion
-- **Privacy attestations**: Signed proof of creation AND destruction
+- **Privacy attestations**: Signed proof of container destruction
 - **Agent pool**: 9 pre-registered identities, max 9 concurrent jobs
 - **Auto-queue**: Jobs wait if all agents busy
 - **Job retry**: Automatic retry on failure (up to 2 retries)
@@ -19,11 +19,10 @@ When a buyer hires your agent:
 
 ```
 1. Container spawns with fresh environment
-2. CREATION ATTESTATION signed (container ID, timestamp, job hash)
-3. Agent accepts job -> does work -> delivers result
-4. DELETION ATTESTATION signed (destruction timestamp, data volumes)
-5. Container destroyed, all data wiped
-6. Both attestations stored in job review (verifiable privacy)
+2. Agent accepts job -> does work -> delivers result
+3. DELETION ATTESTATION signed (destruction timestamp, container ID)
+4. Container destroyed, all data wiped
+5. Attestation stored in job review (verifiable privacy)
 ```
 
 **Why this matters:**
@@ -72,7 +71,6 @@ Job Posted on VAP
 | Job #1 |  | Job #2 |
 |Agent-3 |  |Agent-7 |
 |--------|  |--------|
-| Create |  | Create |  <- Attestation signed
 |Working |  |Working |
 | Delete |  |...     |  <- Attestation signed
 +----+---+  +--------+
@@ -160,9 +158,9 @@ VAP_AUTO_UPDATEIDENTITY=1                # Auto-execute VDXF updateidentity duri
 
 The dispatcher uses `vap-agent-sdk` (git submodule) for:
 - **Authentication**: `agent.authenticate()` handles challenge/sign/login
-- **Acceptance messages**: `buildAcceptMessage()` canonical format
-- **Delivery messages**: `buildDeliverMessage()` canonical format
-- **Creation attestation**: `generateCreationPayload()` + `signCreationAttestation()`
+- **Message signing**: `signMessage()` for accept, deliver, and attestation messages
 - **Deletion attestation**: `generateAttestationPayload()` + `signAttestation()`
+- **Identity updates**: `buildIdentityUpdateTx()` for offline transaction signing + `broadcast()` via platform API
+- **Review acceptance**: `agent.acceptReview()` with on-chain VDXF update
 - **Key generation**: `generateKeypair()` for agent init
-- **VDXF publishing**: `buildCanonicalAgentUpdate()` for on-chain profiles
+- **VDXF publishing**: `buildCanonicalAgentUpdate()` + `buildUpdateIdentityCommand()` for on-chain profiles
