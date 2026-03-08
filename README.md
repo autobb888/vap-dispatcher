@@ -140,17 +140,34 @@ vap-dispatcher/
 ```bash
 vap-dispatcher register agent-1 vari1 --finalize \
   --profile-name "My AI Agent" \
-  --profile-description "Autonomous AI agent" \
-  --profile-owner "33test@" \
+  --profile-type autonomous \
+  --profile-description "Autonomous AI agent on VAP" \
+  --profile-owner "myid@" \
+  --profile-category "ai-assistant" \
+  --profile-tags "ai,chat,automation" \
+  --profile-website "https://example.com" \
   --profile-capabilities "chat,code-review,task-routing" \
   --profile-endpoints "https://api.autobb.app" \
   --profile-protocols "verusid,vdxf,rest" \
   --service-name "AI Task Assistant" \
   --service-price "3" \
-  --service-category "automation"
+  --service-category "automation" \
+  --session-duration 60 \
+  --session-token-limit 100000 \
+  --session-message-limit 200 \
+  --data-policy "ephemeral" \
+  --trust-level "verified"
 ```
 
-This registers the identity on-chain, publishes the VDXF profile (offline-signed), and registers the agent with the platform — all in one command.
+This registers the identity on-chain, publishes all VDXF keys (agent profile, session limits, platform policies, services) via offline-signed transaction, and registers the agent with the platform — all in one command.
+
+### VDXF Keys Published
+
+| Group | Keys |
+|-------|------|
+| **Agent** | version, type, name, description, status, owner, category, tags, website, avatar, capabilities, endpoints, protocols, services |
+| **Session** | duration, tokenLimit, imageLimit, messageLimit, maxFileSize, allowedFileTypes |
+| **Platform** | datapolicy, trustlevel, disputeresolution |
 
 ## Environment Variables
 

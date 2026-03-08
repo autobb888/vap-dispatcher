@@ -113,6 +113,44 @@ function pruneSeenJobs(seen) {
   }
 }
 
+/**
+ * Build a full agent profile from CLI options, including session and platform keys.
+ */
+function buildFullProfile(options) {
+  const profile = {
+    name: options.profileName,
+    type: options.profileType || 'autonomous',
+    description: options.profileDescription,
+    owner: options.profileOwner,
+    category: options.profileCategory,
+    tags: options.profileTags,
+    website: options.profileWebsite,
+    avatar: options.profileAvatar,
+    capabilities: options.profileCapabilities,
+    endpoints: options.profileEndpoints,
+    protocols: options.profileProtocols,
+    datapolicy: options.dataPolicy,
+    trustlevel: options.trustLevel,
+    disputeresolution: options.disputeResolution,
+  };
+
+  // Session limits
+  const hasSession = options.sessionDuration != null || options.sessionTokenLimit != null ||
+    options.sessionImageLimit != null || options.sessionMessageLimit != null ||
+    options.sessionMaxFileSize != null || options.sessionAllowedFileTypes;
+  if (hasSession) {
+    profile.session = {};
+    if (options.sessionDuration != null) profile.session.duration = options.sessionDuration;
+    if (options.sessionTokenLimit != null) profile.session.tokenLimit = options.sessionTokenLimit;
+    if (options.sessionImageLimit != null) profile.session.imageLimit = options.sessionImageLimit;
+    if (options.sessionMessageLimit != null) profile.session.messageLimit = options.sessionMessageLimit;
+    if (options.sessionMaxFileSize != null) profile.session.maxFileSize = options.sessionMaxFileSize;
+    if (options.sessionAllowedFileTypes) profile.session.allowedFileTypes = options.sessionAllowedFileTypes;
+  }
+
+  return profile;
+}
+
 function createFinalizeHooks(agentId, identityName, profile, services = []) {
   const agentDir = path.join(AGENTS_DIR, agentId);
   const keys = loadAgentKeys(agentId) || {};
@@ -323,6 +361,19 @@ program
   .option('--service-currency <currency>', 'Service currency', 'VRSC')
   .option('--service-category <cat>', 'Service category')
   .option('--service-turnaround <time>', 'Service turnaround time', '1h')
+  .option('--profile-tags <tags>', 'Comma-separated tags', (v) => v.split(','))
+  .option('--profile-website <url>', 'Agent website URL')
+  .option('--profile-avatar <url>', 'Agent avatar URL')
+  .option('--profile-category <cat>', 'Agent category')
+  .option('--session-duration <min>', 'Max session duration in minutes', parseInt)
+  .option('--session-token-limit <n>', 'Max tokens per session', parseInt)
+  .option('--session-image-limit <n>', 'Max images per session', parseInt)
+  .option('--session-message-limit <n>', 'Max messages per session', parseInt)
+  .option('--session-max-file-size <bytes>', 'Max file size in bytes', parseInt)
+  .option('--session-allowed-file-types <types>', 'Comma-separated file types', (v) => v.split(','))
+  .option('--data-policy <policy>', 'Data handling policy (ephemeral|retained|encrypted)')
+  .option('--trust-level <level>', 'Trust level (basic|verified|audited)')
+  .option('--dispute-resolution <method>', 'Dispute resolution method')
   .action(async (agentId, identityName, options) => {
     ensureDirs();
 
@@ -364,15 +415,7 @@ program
         const profile = options.interactive
           ? undefined
           : (options.profileName && options.profileDescription
-            ? {
-                name: options.profileName,
-                type: options.profileType,
-                description: options.profileDescription,
-                owner: options.profileOwner,
-                capabilities: options.profileCapabilities,
-                endpoints: options.profileEndpoints,
-                protocols: options.profileProtocols,
-              }
+            ? buildFullProfile(options)
             : undefined);
 
         const services = (options.serviceName && options.servicePrice)
@@ -415,12 +458,25 @@ program
   .option('--profile-capabilities <caps>', 'Comma-separated capabilities', (v) => v.split(','))
   .option('--profile-endpoints <eps>', 'Comma-separated endpoints', (v) => v.split(','))
   .option('--profile-protocols <protos>', 'Comma-separated protocols', (v) => v.split(','))
+  .option('--profile-tags <tags>', 'Comma-separated tags', (v) => v.split(','))
+  .option('--profile-website <url>', 'Agent website URL')
+  .option('--profile-avatar <url>', 'Agent avatar URL')
+  .option('--profile-category <cat>', 'Agent category')
   .option('--service-name <name>', 'Service name for marketplace listing')
   .option('--service-description <desc>', 'Service description')
   .option('--service-price <price>', 'Service price')
   .option('--service-currency <currency>', 'Service currency', 'VRSC')
   .option('--service-category <cat>', 'Service category')
   .option('--service-turnaround <time>', 'Service turnaround time', '1h')
+  .option('--session-duration <min>', 'Max session duration in minutes', parseInt)
+  .option('--session-token-limit <n>', 'Max tokens per session', parseInt)
+  .option('--session-image-limit <n>', 'Max images per session', parseInt)
+  .option('--session-message-limit <n>', 'Max messages per session', parseInt)
+  .option('--session-max-file-size <bytes>', 'Max file size in bytes', parseInt)
+  .option('--session-allowed-file-types <types>', 'Comma-separated file types', (v) => v.split(','))
+  .option('--data-policy <policy>', 'Data handling policy (ephemeral|retained|encrypted)')
+  .option('--trust-level <level>', 'Trust level (basic|verified|audited)')
+  .option('--dispute-resolution <method>', 'Dispute resolution method')
   .action(async (agentId, options) => {
     ensureDirs();
 
@@ -448,15 +504,7 @@ program
     const profile = options.interactive
       ? undefined
       : (options.profileName && options.profileDescription
-        ? {
-            name: options.profileName,
-            type: options.profileType,
-            description: options.profileDescription,
-            owner: options.profileOwner,
-            capabilities: options.profileCapabilities,
-            endpoints: options.profileEndpoints,
-            protocols: options.profileProtocols,
-          }
+        ? buildFullProfile(options)
         : undefined);
 
     const services = (options.serviceName && options.servicePrice)
