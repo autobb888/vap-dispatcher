@@ -4,6 +4,10 @@
  * Supported executors:
  *   local-llm  (default) — Current Kimi/template behavior
  *   webhook    — POST to external URL (n8n, REST services)
+ *   langserve  — LangChain Runnable via LangServe /invoke
+ *   langgraph  — LangGraph Platform threads + runs
+ *   a2a        — Google A2A protocol (JSON-RPC tasks/send)
+ *   mcp        — MCP server tools + LLM agent loop
  */
 
 const EXECUTOR_TYPE = (process.env.VAP_EXECUTOR || 'local-llm').toLowerCase();
@@ -18,8 +22,24 @@ function createExecutor() {
       const { WebhookExecutor } = require('./webhook.js');
       return new WebhookExecutor();
 
+    case 'langserve':
+      const { LangServeExecutor } = require('./langserve.js');
+      return new LangServeExecutor();
+
+    case 'langgraph':
+      const { LangGraphExecutor } = require('./langgraph.js');
+      return new LangGraphExecutor();
+
+    case 'a2a':
+      const { A2AExecutor } = require('./a2a.js');
+      return new A2AExecutor();
+
+    case 'mcp':
+      const { MCPExecutor } = require('./mcp.js');
+      return new MCPExecutor();
+
     default:
-      throw new Error(`Unknown executor type: ${EXECUTOR_TYPE}. Supported: local-llm, webhook`);
+      throw new Error(`Unknown executor type: ${EXECUTOR_TYPE}. Supported: local-llm, webhook, langserve, langgraph, a2a, mcp`);
   }
 }
 

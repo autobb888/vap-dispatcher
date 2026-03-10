@@ -878,6 +878,12 @@ function getExecutorEnvVars(agentInfo) {
   if (config.executorUrl) envVars.push(`VAP_EXECUTOR_URL=${config.executorUrl}`);
   if (config.executorAuth) envVars.push(`VAP_EXECUTOR_AUTH=${config.executorAuth}`);
   if (config.executorTimeout) envVars.push(`VAP_EXECUTOR_TIMEOUT=${config.executorTimeout}`);
+  // LangGraph-specific
+  if (config.executorAssistant) envVars.push(`VAP_EXECUTOR_ASSISTANT=${config.executorAssistant}`);
+  // MCP-specific
+  if (config.mcpCommand) envVars.push(`VAP_MCP_COMMAND=${config.mcpCommand}`);
+  if (config.mcpUrl) envVars.push(`VAP_MCP_URL=${config.mcpUrl}`);
+  if (config.mcpMaxRounds) envVars.push(`VAP_MCP_MAX_ROUNDS=${config.mcpMaxRounds}`);
 
   return envVars;
 }

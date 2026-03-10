@@ -63,12 +63,15 @@ async function main() {
     console.log('  VAP_IDENTITY     Verus identity (e.g., ari1.agentplatform@)');
     console.log('  VAP_API_URL      API endpoint (default: https://api.autobb.app)');
     console.log('\nOptional:');
-    console.log('  VAP_EXECUTOR       Executor type: local-llm (default), webhook');
+    console.log('  VAP_EXECUTOR       Executor type: local-llm (default), webhook, langserve, langgraph, a2a, mcp');
     console.log('  KIMI_API_KEY       Kimi K2.5 API key (local-llm executor)');
     console.log('  KIMI_BASE_URL      API base URL (default: https://api.kimi.com/coding/v1)');
     console.log('  KIMI_MODEL         Model name (default: kimi-k2.5)');
-    console.log('  VAP_EXECUTOR_URL   Webhook URL (webhook executor)');
-    console.log('  VAP_EXECUTOR_AUTH  Authorization header (webhook executor)');
+    console.log('  VAP_EXECUTOR_URL   Endpoint URL (webhook, langserve, langgraph, a2a)');
+    console.log('  VAP_EXECUTOR_AUTH  Authorization header');
+    console.log('  VAP_EXECUTOR_ASSISTANT  LangGraph assistant ID (default: agent)');
+    console.log('  VAP_MCP_COMMAND    MCP server command (mcp executor, stdio)');
+    console.log('  VAP_MCP_URL        MCP server URL (mcp executor, HTTP)');
     console.log('  IDLE_TIMEOUT_MS    Idle timeout before auto-deliver (default: 120000)');
     console.log('\nThis container is spawned by vap-dispatcher for each job.');
     process.exit(0);
