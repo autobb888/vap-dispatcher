@@ -15,6 +15,7 @@ const { Executor } = require('./base.js');
 const EXECUTOR_URL = process.env.VAP_EXECUTOR_URL;
 const EXECUTOR_AUTH = process.env.VAP_EXECUTOR_AUTH || '';
 const EXECUTOR_TIMEOUT = parseInt(process.env.VAP_EXECUTOR_TIMEOUT || '60000');
+const MAX_CONVERSATION_LOG = parseInt(process.env.MAX_CONVERSATION_LOG || '50');
 
 class LangServeExecutor extends Executor {
   constructor() {
@@ -48,6 +49,12 @@ class LangServeExecutor extends Executor {
 
   async handleMessage(message, meta) {
     this.conversationLog.push({ role: 'user', content: message });
+
+    // Cap conversation log to prevent OOM
+    if (this.conversationLog.length > MAX_CONVERSATION_LOG) {
+      const first = this.conversationLog[0];
+      this.conversationLog.splice(0, this.conversationLog.length - MAX_CONVERSATION_LOG + 1, first);
+    }
 
     const response = await this._invoke({
       task: this.job.description,
@@ -96,7 +103,12 @@ class LangServeExecutor extends Executor {
         throw new Error(`LangServe returned ${res.status}`);
       }
 
-      const data = await res.json();
+      let data;
+      try {
+        data = await res.json();
+      } catch (parseErr) {
+        throw new Error(`LangServe returned non-JSON response: ${parseErr.message}`);
+      }
       // LangServe returns { output: ... } where output is the Runnable's result
       if (typeof data.output === 'string') return data.output;
       return data.output?.content || JSON.stringify(data.output);

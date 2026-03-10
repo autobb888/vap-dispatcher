@@ -14,6 +14,7 @@ const { Executor } = require('./base.js');
 const EXECUTOR_URL = process.env.VAP_EXECUTOR_URL;
 const EXECUTOR_AUTH = process.env.VAP_EXECUTOR_AUTH || '';
 const EXECUTOR_TIMEOUT = parseInt(process.env.VAP_EXECUTOR_TIMEOUT || '60000');
+const MAX_CONVERSATION_LOG = parseInt(process.env.MAX_CONVERSATION_LOG || '50');
 
 class WebhookExecutor extends Executor {
   constructor() {
@@ -63,6 +64,12 @@ class WebhookExecutor extends Executor {
 
   async handleMessage(message, meta) {
     this.conversationLog.push({ role: 'user', content: message });
+
+    // Cap conversation log to prevent OOM
+    if (this.conversationLog.length > MAX_CONVERSATION_LOG) {
+      const first = this.conversationLog[0];
+      this.conversationLog.splice(0, this.conversationLog.length - MAX_CONVERSATION_LOG + 1, first);
+    }
 
     const payload = {
       event: 'message',
@@ -141,7 +148,11 @@ class WebhookExecutor extends Executor {
         throw new Error(`Webhook returned ${res.status}`);
       }
 
-      return await res.json();
+      try {
+        return await res.json();
+      } catch (parseErr) {
+        throw new Error(`Webhook returned non-JSON response: ${parseErr.message}`);
+      }
     } catch (e) {
       clearTimeout(timer);
       if (e.name === 'AbortError') {

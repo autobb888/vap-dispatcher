@@ -16,6 +16,7 @@ const EXECUTOR_URL = process.env.VAP_EXECUTOR_URL;
 const EXECUTOR_AUTH = process.env.VAP_EXECUTOR_AUTH || '';
 const EXECUTOR_ASSISTANT = process.env.VAP_EXECUTOR_ASSISTANT || 'agent';
 const EXECUTOR_TIMEOUT = parseInt(process.env.VAP_EXECUTOR_TIMEOUT || '120000');
+const MAX_CONVERSATION_LOG = parseInt(process.env.MAX_CONVERSATION_LOG || '50');
 
 class LangGraphExecutor extends Executor {
   constructor() {
@@ -61,6 +62,12 @@ class LangGraphExecutor extends Executor {
 
   async handleMessage(message, meta) {
     this.conversationLog.push({ role: 'user', content: message });
+
+    // Cap conversation log to prevent OOM
+    if (this.conversationLog.length > MAX_CONVERSATION_LOG) {
+      const first = this.conversationLog[0];
+      this.conversationLog.splice(0, this.conversationLog.length - MAX_CONVERSATION_LOG + 1, first);
+    }
 
     const result = await this._runAndWait({
       messages: [{ role: 'user', content: message }],
@@ -145,7 +152,11 @@ class LangGraphExecutor extends Executor {
       }
 
       if (method === 'DELETE') return {};
-      return await res.json();
+      try {
+        return await res.json();
+      } catch (parseErr) {
+        throw new Error(`LangGraph returned non-JSON response: ${parseErr.message}`);
+      }
     } catch (e) {
       clearTimeout(timer);
       if (e.name === 'AbortError') {

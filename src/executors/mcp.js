@@ -233,9 +233,15 @@ class MCPExecutor extends Executor {
     const cmd = parts[0];
     const args = parts.slice(1);
 
+    // Whitelist env vars — don't leak secrets to MCP child process
+    const safeEnv = {};
+    const SAFE_KEYS = ['PATH', 'HOME', 'USER', 'SHELL', 'LANG', 'TERM', 'NODE_ENV', 'HOSTNAME', 'TZ'];
+    for (const key of SAFE_KEYS) {
+      if (process.env[key]) safeEnv[key] = process.env[key];
+    }
     this.mcpProcess = spawn(cmd, args, {
       stdio: ['pipe', 'pipe', 'pipe'],
-      env: { ...process.env },
+      env: safeEnv,
     });
 
     this.mcpProcess.stderr.on('data', (data) => {
@@ -249,11 +255,12 @@ class MCPExecutor extends Executor {
 
     this.mcpProcess.on('exit', (code) => {
       console.log(`[MCP] Server process exited with code ${code}`);
+      this.mcpProcess = null;
       // Reject any pending requests
       for (const [id, { reject }] of this._pending) {
         reject(new Error('MCP server process exited'));
-        this._pending.delete(id);
       }
+      this._pending.clear();
     });
 
     // Give the process a moment to start
@@ -294,11 +301,15 @@ class MCPExecutor extends Executor {
     });
 
     // Send initialized notification (no id = notification)
-    if (this.transport === 'stdio') {
-      this.mcpProcess.stdin.write(JSON.stringify({
-        jsonrpc: '2.0',
-        method: 'notifications/initialized',
-      }) + '\n');
+    if (this.transport === 'stdio' && this.mcpProcess) {
+      try {
+        this.mcpProcess.stdin.write(JSON.stringify({
+          jsonrpc: '2.0',
+          method: 'notifications/initialized',
+        }) + '\n');
+      } catch (e) {
+        console.error(`[MCP] Failed to send initialized notification: ${e.message}`);
+      }
     }
   }
 
@@ -307,6 +318,9 @@ class MCPExecutor extends Executor {
     const body = { jsonrpc: '2.0', id, method, params };
 
     if (this.transport === 'stdio') {
+      if (!this.mcpProcess) {
+        throw new Error('MCP server process is not running');
+      }
       return new Promise((resolve, reject) => {
         const timer = setTimeout(() => {
           this._pending.delete(id);
@@ -318,7 +332,13 @@ class MCPExecutor extends Executor {
           reject: (err) => { clearTimeout(timer); reject(err); },
         });
 
-        this.mcpProcess.stdin.write(JSON.stringify(body) + '\n');
+        try {
+          this.mcpProcess.stdin.write(JSON.stringify(body) + '\n');
+        } catch (writeErr) {
+          this._pending.delete(id);
+          clearTimeout(timer);
+          reject(new Error(`MCP stdin write failed: ${writeErr.message}`));
+        }
       });
     }
 
@@ -349,7 +369,12 @@ class MCPExecutor extends Executor {
         throw new Error(`MCP HTTP ${res.status}: ${errText.substring(0, 200)}`);
       }
 
-      const data = await res.json();
+      let data;
+      try {
+        data = await res.json();
+      } catch (parseErr) {
+        throw new Error(`MCP HTTP returned non-JSON response: ${parseErr.message}`);
+      }
       if (data.error) {
         throw new Error(`MCP error ${data.error.code}: ${data.error.message}`);
       }

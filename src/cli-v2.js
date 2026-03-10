@@ -1009,14 +1009,15 @@ async function startJobContainer(state, job, agentInfo) {
       // Non-fatal: log streaming is for debugging only
     }
 
-    // Set timeout
+    // Set timeout — offset +60s from container's internal timeout
+    // so the container can self-terminate and submit attestation first
     setTimeout(async () => {
       const active = state.active.get(job.id);
       if (active) {
         console.log(`⏰ Job ${job.id} timeout, killing container`);
         await stopJobContainer(state, job.id);
       }
-    }, JOB_TIMEOUT_MS);
+    }, JOB_TIMEOUT_MS + 60000);
     
   } catch (e) {
     console.error(`❌ Failed to start container for ${job.id}:`, e.message);

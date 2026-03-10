@@ -50,6 +50,10 @@ async function withRetry(fn, label, { maxAttempts = 3, baseDelayMs = 1000 } = {}
   }
 }
 
+// Track agent+executor globally for SIGTERM cleanup
+let _agent = null;
+let _executor = null;
+
 async function main() {
   // Check for required environment variables
   if (!AGENT_ID || !JOB_ID || !IDENTITY) {
@@ -120,6 +124,7 @@ async function main() {
     identityName: IDENTITY,
     iAddress: keys.iAddress,
   });
+  _agent = agent;
 
   // Establish authenticated API session via SDK login
   await withRetry(() => agent.authenticate(), 'authenticate');
@@ -136,15 +141,34 @@ async function main() {
 
   // Fetch canonical job data and build acceptance message
   const fullJob = await agent.client.getJob(job.id);
+  if (!fullJob || !fullJob.jobHash || !fullJob.buyerVerusId) {
+    throw new Error(`Invalid job data from API for ${job.id}: missing jobHash or buyerVerusId`);
+  }
   const acceptMessage = `VAP-ACCEPT|Job:${fullJob.jobHash}|Buyer:${fullJob.buyerVerusId}|Amt:${fullJob.amount} ${fullJob.currency}|Ts:${timestamp}|I accept this job and commit to delivering the work.`;
   const acceptSig = signMessage(keys.wif, acceptMessage, 'verustest');
 
   await withRetry(() => agent.client.acceptJob(job.id, acceptSig, timestamp), 'acceptJob');
   console.log('✅ Job accepted\n');
 
-  // Connect to chat
-  await agent.connectChat();
-  console.log('✅ Connected to SafeChat\n');
+  // Connect to chat (guarded — job is already accepted, must not crash without delivery)
+  try {
+    await agent.connectChat();
+    console.log('✅ Connected to SafeChat\n');
+  } catch (chatErr) {
+    console.error('❌ Chat connection failed after job acceptance:', chatErr.message);
+    // Deliver a "failed" result so the accepted job isn't left in limbo
+    const deliverTimestamp = Math.floor(Date.now() / 1000);
+    const deliverMessage = `VAP-DELIVER|Job:${fullJob.jobHash}|Delivery:failed|Ts:${deliverTimestamp}|I have delivered the work for this job.`;
+    const deliverSig = signMessage(keys.wif, deliverMessage, 'verustest');
+    await withRetry(
+      () => agent.client.deliverJob(job.id, 'failed', deliverSig, deliverTimestamp, 'Chat connection failed — could not process job'),
+      'deliverJob-chatfail',
+      { maxAttempts: 5, baseDelayMs: 2000 }
+    );
+    console.log('✅ Delivered failure result');
+    agent.stop();
+    process.exit(1);
+  }
 
   // Explicitly join this job's chat room
   agent.joinJobChat(job.id);
@@ -176,6 +200,7 @@ async function main() {
   console.log(`→ Starting chat session (executor: ${EXECUTOR_TYPE})...\n`);
 
   const executor = createExecutor();
+  _executor = executor;
   let result;
   try {
     result = await processJob(job, agent, soulPrompt, executor, (resolve) => { sessionEndResolve = resolve; });
@@ -254,6 +279,7 @@ async function processJob(job, agent, soulPrompt, executor, registerSessionEndRe
   let sessionEnded = false;
   let resolveSession;
   let messageCount = 0;
+  let messageQueue = Promise.resolve(); // J4: Serialize handleMessage calls
 
   // Promise that resolves when session ends or idle timeout
   const sessionPromise = new Promise((resolve) => {
@@ -264,8 +290,8 @@ async function processJob(job, agent, soulPrompt, executor, registerSessionEndRe
   // Initialize executor (sends greeting, sets up state)
   await executor.init(job, agent, soulPrompt);
 
-  // Handle incoming messages — delegate to executor
-  agent.onChatMessage(async (jobId, msg) => {
+  // Handle incoming messages — delegate to executor (J4: serialized via queue)
+  agent.onChatMessage((jobId, msg) => {
     if (jobId !== job.id) return;
     lastActivityAt = Date.now();
     messageCount++;
@@ -273,18 +299,21 @@ async function processJob(job, agent, soulPrompt, executor, registerSessionEndRe
     const buyerMessage = sanitizeInput(msg.content);
     console.log(`[CHAT] ${msg.senderVerusId}: ${buyerMessage.substring(0, 80)}`);
 
-    try {
-      const response = await executor.handleMessage(buyerMessage, {
-        senderVerusId: msg.senderVerusId,
-        jobId: msg.jobId,
-      });
+    // Serialize: each message waits for the previous to complete
+    messageQueue = messageQueue.then(async () => {
+      try {
+        const response = await executor.handleMessage(buyerMessage, {
+          senderVerusId: msg.senderVerusId,
+          jobId: msg.jobId,
+        });
 
-      agent.sendChatMessage(job.id, response);
-      console.log(`[CHAT] Agent: ${response.substring(0, 80)}`);
-    } catch (e) {
-      console.error(`[CHAT] Executor error: ${e.message}`);
-      agent.sendChatMessage(job.id, 'I experienced an issue processing your message. Please try again.');
-    }
+        agent.sendChatMessage(job.id, response);
+        console.log(`[CHAT] Agent: ${response.substring(0, 80)}`);
+      } catch (e) {
+        console.error(`[CHAT] Executor error: ${e.message}`);
+        agent.sendChatMessage(job.id, 'I experienced an issue processing your message. Please try again.');
+      }
+    });
   });
 
   // Idle timer — check periodically if we should auto-deliver
@@ -306,6 +335,38 @@ async function processJob(job, agent, soulPrompt, executor, registerSessionEndRe
   // Finalize executor — get deliverable
   return await executor.finalize();
 }
+
+// J1: Graceful shutdown on SIGTERM — submit attestation before exit
+process.on('SIGTERM', async () => {
+  console.log('🛑 SIGTERM received — shutting down gracefully');
+  try {
+    // Clean up executor
+    if (_executor) await _executor.cleanup().catch(() => {});
+
+    // Submit deletion attestation
+    const keys = JSON.parse(fs.readFileSync(KEYS_FILE, 'utf8'));
+    const attestTimestamp = Math.floor(Date.now() / 1000);
+    try {
+      if (_agent) {
+        const { message: attestMessage } = await _agent.client.getDeletionAttestationMessage(JOB_ID, attestTimestamp);
+        const attestSig = signMessage(keys.wif, attestMessage, 'verustest');
+        fs.writeFileSync(
+          path.join(JOB_DIR, 'deletion-attestation-sigterm.json'),
+          JSON.stringify({ jobId: JOB_ID, message: attestMessage, signature: attestSig, timestamp: attestTimestamp }, null, 2)
+        );
+        await _agent.client.submitDeletionAttestation(JOB_ID, attestSig, attestTimestamp);
+        console.log('✅ SIGTERM attestation submitted');
+      }
+    } catch (e) {
+      console.error('⚠️  SIGTERM attestation failed:', e.message);
+    }
+
+    if (_agent) _agent.stop();
+  } catch (e) {
+    console.error('SIGTERM cleanup error:', e.message);
+  }
+  process.exit(130);
+});
 
 // Timeout protection (J4: also submit attestation to API, not just disk)
 setTimeout(async () => {

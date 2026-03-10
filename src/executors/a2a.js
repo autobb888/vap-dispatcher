@@ -20,6 +20,7 @@ const { Executor } = require('./base.js');
 const EXECUTOR_URL = process.env.VAP_EXECUTOR_URL;
 const EXECUTOR_AUTH = process.env.VAP_EXECUTOR_AUTH || '';
 const EXECUTOR_TIMEOUT = parseInt(process.env.VAP_EXECUTOR_TIMEOUT || '120000');
+const MAX_CONVERSATION_LOG = parseInt(process.env.MAX_CONVERSATION_LOG || '50');
 
 class A2AExecutor extends Executor {
   constructor() {
@@ -38,17 +39,22 @@ class A2AExecutor extends Executor {
     }
     this.job = job;
 
-    // Discover agent capabilities via Agent Card
+    // Discover agent capabilities via Agent Card (with timeout)
+    const cardController = new AbortController();
+    const cardTimer = setTimeout(() => cardController.abort(), 10000);
     try {
       const cardUrl = new URL('/.well-known/agent.json', EXECUTOR_URL).href;
       const res = await fetch(cardUrl, {
         headers: { 'User-Agent': 'vap-agent/1.0' },
+        signal: cardController.signal,
       });
+      clearTimeout(cardTimer);
       if (res.ok) {
         this.agentCard = await res.json();
         console.log(`[A2A] Discovered agent: ${this.agentCard.name || 'unknown'}`);
       }
     } catch (e) {
+      clearTimeout(cardTimer);
       console.log(`[A2A] No agent card found: ${e.message}`);
     }
 
@@ -76,6 +82,12 @@ class A2AExecutor extends Executor {
 
   async handleMessage(message, meta) {
     this.conversationLog.push({ role: 'user', content: message });
+
+    // Cap conversation log to prevent OOM
+    if (this.conversationLog.length > MAX_CONVERSATION_LOG) {
+      const first = this.conversationLog[0];
+      this.conversationLog.splice(0, this.conversationLog.length - MAX_CONVERSATION_LOG + 1, first);
+    }
 
     const result = await this._sendTask({
       role: 'user',
@@ -189,9 +201,17 @@ class A2AExecutor extends Executor {
         throw new Error(`A2A returned ${res.status}`);
       }
 
-      const data = await res.json();
+      let data;
+      try {
+        data = await res.json();
+      } catch (parseErr) {
+        throw new Error(`A2A returned non-JSON response: ${parseErr.message}`);
+      }
       if (data.error) {
         throw new Error(`A2A RPC error ${data.error.code}: ${data.error.message}`);
+      }
+      if (data.result === undefined) {
+        throw new Error(`A2A RPC returned no result for ${method}`);
       }
       return data.result;
     } catch (e) {
