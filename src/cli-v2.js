@@ -114,6 +114,21 @@ function pruneSeenJobs(seen) {
 }
 
 /**
+ * Parse a JSON array string, or return undefined on bad input.
+ * Used for --profile-endpoints and --profile-capabilities.
+ */
+function parseJsonArray(val) {
+  try {
+    const parsed = JSON.parse(val);
+    if (!Array.isArray(parsed)) throw new Error('not an array');
+    return parsed;
+  } catch (e) {
+    console.error(`⚠️  Invalid JSON array: ${e.message}`);
+    return undefined;
+  }
+}
+
+/**
  * Build a full agent profile from CLI options, including session and platform keys.
  */
 function buildFullProfile(options) {
@@ -352,9 +367,9 @@ program
   .option('--profile-type <type>', 'Profile type (autonomous|assisted|hybrid|tool)', 'autonomous')
   .option('--profile-description <desc>', 'Profile description for headless finalize')
   .option('--profile-owner <owner>', 'Owner VerusID (e.g., 33test@)')
-  .option('--profile-capabilities <caps>', 'Comma-separated capabilities', (v) => v.split(','))
-  .option('--profile-endpoints <eps>', 'Comma-separated endpoints', (v) => v.split(','))
-  .option('--profile-protocols <protos>', 'Comma-separated protocols', (v) => v.split(','))
+  .option('--profile-capabilities <json>', 'Capabilities as JSON array: [{"id":"x","name":"X"}]', parseJsonArray)
+  .option('--profile-endpoints <json>', 'Endpoints as JSON array: [{"url":"https://...","protocol":"MCP"}]', parseJsonArray)
+  .option('--profile-protocols <protos>', 'Comma-separated protocols (MCP,REST,A2A,WebSocket)', (v) => v.split(','))
   .option('--service-name <name>', 'Service name for marketplace listing')
   .option('--service-description <desc>', 'Service description')
   .option('--service-price <price>', 'Service price')
@@ -370,7 +385,7 @@ program
   .option('--session-image-limit <n>', 'Max images per session', parseInt)
   .option('--session-message-limit <n>', 'Max messages per session', parseInt)
   .option('--session-max-file-size <bytes>', 'Max file size in bytes', parseInt)
-  .option('--session-allowed-file-types <types>', 'Comma-separated file types', (v) => v.split(','))
+  .option('--session-allowed-file-types <types>', 'Comma-separated MIME types', (v) => v.split(','))
   .option('--data-policy <policy>', 'Data handling policy (ephemeral|retained|encrypted)')
   .option('--trust-level <level>', 'Trust level (basic|verified|audited)')
   .option('--dispute-resolution <method>', 'Dispute resolution method')
@@ -455,9 +470,9 @@ program
   .option('--profile-type <type>', 'Profile type (autonomous|assisted|hybrid|tool)', 'autonomous')
   .option('--profile-description <desc>', 'Profile description for headless finalize')
   .option('--profile-owner <owner>', 'Owner VerusID (e.g., 33test@)')
-  .option('--profile-capabilities <caps>', 'Comma-separated capabilities', (v) => v.split(','))
-  .option('--profile-endpoints <eps>', 'Comma-separated endpoints', (v) => v.split(','))
-  .option('--profile-protocols <protos>', 'Comma-separated protocols', (v) => v.split(','))
+  .option('--profile-capabilities <json>', 'Capabilities as JSON array: [{"id":"x","name":"X"}]', parseJsonArray)
+  .option('--profile-endpoints <json>', 'Endpoints as JSON array: [{"url":"https://...","protocol":"MCP"}]', parseJsonArray)
+  .option('--profile-protocols <protos>', 'Comma-separated protocols (MCP,REST,A2A,WebSocket)', (v) => v.split(','))
   .option('--profile-tags <tags>', 'Comma-separated tags', (v) => v.split(','))
   .option('--profile-website <url>', 'Agent website URL')
   .option('--profile-avatar <url>', 'Agent avatar URL')
@@ -473,7 +488,7 @@ program
   .option('--session-image-limit <n>', 'Max images per session', parseInt)
   .option('--session-message-limit <n>', 'Max messages per session', parseInt)
   .option('--session-max-file-size <bytes>', 'Max file size in bytes', parseInt)
-  .option('--session-allowed-file-types <types>', 'Comma-separated file types', (v) => v.split(','))
+  .option('--session-allowed-file-types <types>', 'Comma-separated MIME types', (v) => v.split(','))
   .option('--data-policy <policy>', 'Data handling policy (ephemeral|retained|encrypted)')
   .option('--trust-level <level>', 'Trust level (basic|verified|audited)')
   .option('--dispute-resolution <method>', 'Dispute resolution method')
@@ -785,12 +800,20 @@ async function pollForJobs(state) {
     }
   }
   
-  // Process queue if slots available
+  // Process queue if slots available (D3: re-queue on failure instead of dropping)
   while (state.queue.length > 0 && state.active.size < MAX_AGENTS && state.available.length > 0) {
     const queuedJob = state.queue.shift();
     const agent = state.available.pop();
     console.log(`   → Processing queued job ${queuedJob.id} with ${agent.id}`);
-    await startJobContainer(state, queuedJob, agent);
+    try {
+      await startJobContainer(state, queuedJob, agent);
+    } catch (e) {
+      console.error(`   ❌ Failed to start container for queued job ${queuedJob.id}: ${e.message}`);
+      // Return agent to pool and re-queue the job at the back
+      state.available.push(agent);
+      state.queue.push(queuedJob);
+      break; // Don't keep trying if container creation is failing
+    }
   }
 }
 
@@ -831,13 +854,42 @@ async function checkPendingReviews(state) {
   }
 }
 
+// M7: Read per-agent executor config and return as env vars for container
+function getExecutorEnvVars(agentInfo) {
+  const envVars = [];
+  const agentDir = path.join(AGENTS_DIR, agentInfo.id);
+
+  // Try agent-config.json first, then fall back to keys.json
+  let config = {};
+  try {
+    const configPath = path.join(agentDir, 'agent-config.json');
+    if (fs.existsSync(configPath)) {
+      config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    } else {
+      // Fall back to executor fields in keys.json
+      const keys = JSON.parse(fs.readFileSync(path.join(agentDir, 'keys.json'), 'utf8'));
+      if (keys.executor) config = keys;
+    }
+  } catch {
+    // No config — use defaults
+  }
+
+  if (config.executor) envVars.push(`VAP_EXECUTOR=${config.executor}`);
+  if (config.executorUrl) envVars.push(`VAP_EXECUTOR_URL=${config.executorUrl}`);
+  if (config.executorAuth) envVars.push(`VAP_EXECUTOR_AUTH=${config.executorAuth}`);
+  if (config.executorTimeout) envVars.push(`VAP_EXECUTOR_TIMEOUT=${config.executorTimeout}`);
+
+  return envVars;
+}
+
 // Start a job container
 async function startJobContainer(state, job, agentInfo) {
   const jobDir = path.join(JOBS_DIR, job.id);
   fs.mkdirSync(jobDir, { recursive: true });
   // Ensure writable across rootless/user-namespaced container runtimes
+  // Use 0o755 — NOT 0o777 which lets any host process read/tamper job data
   try {
-    fs.chmodSync(jobDir, 0o777);
+    fs.chmodSync(jobDir, 0o755);
   } catch {
     // best effort
   }
@@ -853,8 +905,9 @@ async function startJobContainer(state, job, agentInfo) {
 
   // Ensure key file is readable inside rootless/uid-remapped containers
   // (was 0600 from init, causing EACCES in job-agent)
+  // Use 0o640 (owner rw, group r) — NOT 0o644 which makes WIF world-readable
   try {
-    fs.chmodSync(keysPath, 0o644);
+    fs.chmodSync(keysPath, 0o640);
   } catch {
     // best effort
   }
@@ -876,6 +929,8 @@ async function startJobContainer(state, job, agentInfo) {
         ...(process.env.KIMI_BASE_URL   ? [`KIMI_BASE_URL=${process.env.KIMI_BASE_URL}`]     : []),
         ...(process.env.KIMI_MODEL      ? [`KIMI_MODEL=${process.env.KIMI_MODEL}`]            : []),
         ...(process.env.IDLE_TIMEOUT_MS ? [`IDLE_TIMEOUT_MS=${process.env.IDLE_TIMEOUT_MS}`]  : []),
+        // M7: Per-agent executor config (from agent-config.json or keys.json)
+        ...getExecutorEnvVars(agentInfo),
       ],
       HostConfig: {
         Binds: [
@@ -891,6 +946,10 @@ async function startJobContainer(state, job, agentInfo) {
         SecurityOpt: ['no-new-privileges:true'],
         // Read-only root filesystem
         ReadonlyRootfs: true,
+        // tmpfs for /tmp so processes can write temp files on readonly rootfs (X6)
+        Tmpfs: { '/tmp': 'rw,noexec,nosuid,size=64m' },
+        // Limit process count to prevent fork bombs (X7)
+        PidsLimit: 64,
         // Drop all capabilities
         CapDrop: ['ALL'],
       },
@@ -976,6 +1035,14 @@ async function stopJobContainer(state, jobId, skipReturnAgent = false) {
     }
   }
 
+  // Restore keys.json to 0o600 (was relaxed to 0o640 for container access)
+  try {
+    const agentDir = path.join(AGENTS_DIR, active.agentInfo.id);
+    fs.chmodSync(path.join(agentDir, 'keys.json'), 0o600);
+  } catch {
+    // best effort
+  }
+
   // Cleanup job dir (retain for debugging if requested)
   const jobDir = path.join(JOBS_DIR, jobId);
   if (fs.existsSync(jobDir) && process.env.VAP_KEEP_CONTAINERS !== '1') {
@@ -1012,8 +1079,18 @@ async function cleanupCompletedJobs(state) {
             state.retries.set(jobId, retries + 1);
             console.log(`🔄 Retrying job ${jobId} (attempt ${retries + 2}/${MAX_RETRIES + 1})`);
             const agentInfo = active.agentInfo;
+            // Re-fetch job data from API before retrying (D1 fix: stopJobContainer deletes jobDir)
+            let job;
+            try {
+              const agent = await getAgentSession(state, agentInfo);
+              job = await agent.client.getJob(jobId);
+            } catch (fetchErr) {
+              console.error(`❌ Could not re-fetch job ${jobId} for retry: ${fetchErr.message}`);
+              await stopJobContainer(state, jobId);
+              continue;
+            }
             await stopJobContainer(state, jobId, true); // skip returning agent
-            await startJobContainer(state, { id: jobId, description: '', buyerVerusId: '', amount: 0, currency: 'VRSCTEST' }, agentInfo);
+            await startJobContainer(state, job, agentInfo);
             continue;
           }
           console.log(`❌ Job ${jobId} failed after ${MAX_RETRIES + 1} attempts`);
