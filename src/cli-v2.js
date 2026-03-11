@@ -548,6 +548,105 @@ program
     }
   });
 
+// Set revoke/recover authorities for an agent's identity
+program
+  .command('set-authorities <agentId>')
+  .description('Set revocation and recovery authorities for an agent identity')
+  .requiredOption('--revoke <iAddress>', 'Revocation authority i-address')
+  .requiredOption('--recover <iAddress>', 'Recovery authority i-address')
+  .action(async (agentId, options) => {
+    ensureDirs();
+
+    const keys = loadAgentKeys(agentId);
+    if (!keys) {
+      console.error(`❌ Agent ${agentId} not found. Run: vap-dispatcher init`);
+      process.exit(1);
+    }
+    if (!keys.identity) {
+      console.error(`❌ Agent ${agentId} has no platform identity. Run register first.`);
+      process.exit(1);
+    }
+
+    const { VAPAgent } = require('../vap-agent-sdk/dist/index.js');
+    const agent = new VAPAgent({
+      vapUrl: process.env.VAP_API_URL || 'https://api.autobb.app',
+      wif: keys.wif,
+      identityName: keys.identity,
+      iAddress: keys.iAddress,
+    });
+
+    await agent.authenticate();
+
+    // Show current authorities first
+    console.log(`\n→ Checking current authorities for ${agentId} (${keys.identity})...`);
+    const current = await agent.checkAuthorities();
+    console.log(`  Identity:    ${current.identityaddress}`);
+    console.log(`  Revoke auth: ${current.revocationauthority}${current.selfRevoke ? ' ⚠️  (SELF — not secure)' : ''}`);
+    console.log(`  Recover auth: ${current.recoveryauthority}${current.selfRecover ? ' ⚠️  (SELF — not secure)' : ''}`);
+
+    console.log(`\n→ Updating authorities...`);
+    console.log(`  New revoke:  ${options.revoke}`);
+    console.log(`  New recover: ${options.recover}`);
+
+    const txid = await agent.setRevokeRecoverAuthorities(options.revoke, options.recover);
+    if (txid === 'already-set') {
+      console.log(`\n✅ Authorities are already set to these values.`);
+    } else {
+      console.log(`\n✅ Authorities updated. Txid: ${txid}`);
+      console.log(`   Wait for confirmation before relying on new authorities.`);
+    }
+
+    agent.stop();
+  });
+
+// Check authorities for all registered agents
+program
+  .command('check-authorities')
+  .description('Check revoke/recover authorities for all registered agents')
+  .action(async () => {
+    ensureDirs();
+
+    const agents = listRegisteredAgents();
+    if (agents.length === 0) {
+      console.log('No registered agents found.');
+      process.exit(0);
+    }
+
+    const { VAPAgent } = require('../vap-agent-sdk/dist/index.js');
+    let warnings = 0;
+
+    for (const agentId of agents) {
+      const keys = loadAgentKeys(agentId);
+      if (!keys || !keys.identity) continue;
+
+      const agent = new VAPAgent({
+        vapUrl: process.env.VAP_API_URL || 'https://api.autobb.app',
+        wif: keys.wif,
+        identityName: keys.identity,
+        iAddress: keys.iAddress,
+      });
+
+      try {
+        await agent.authenticate();
+        const auth = await agent.checkAuthorities();
+        const status = (auth.selfRevoke || auth.selfRecover) ? '⚠️' : '✅';
+        if (auth.selfRevoke || auth.selfRecover) warnings++;
+        console.log(`${status} ${agentId} (${keys.identity})`);
+        console.log(`   Revoke: ${auth.revocationauthority}${auth.selfRevoke ? ' (SELF)' : ''}`);
+        console.log(`   Recover: ${auth.recoveryauthority}${auth.selfRecover ? ' (SELF)' : ''}`);
+      } catch (e) {
+        console.log(`❌ ${agentId}: ${e.message}`);
+      } finally {
+        agent.stop();
+      }
+    }
+
+    if (warnings > 0) {
+      console.log(`\n⚠️  ${warnings} agent(s) have self-referential authorities.`);
+      console.log(`   Run: node src/cli-v2.js set-authorities <agentId> --revoke <iAddr> --recover <iAddr>`);
+    }
+  });
+
 // Start command — run the dispatcher (listen for jobs)
 program
   .command('start')
